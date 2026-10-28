@@ -277,6 +277,10 @@ class ReportWriter:
             "综合评分",
             "判定方式", "规则得分", "预期嵌入式工具", "执行异常", "测试集", "源工作表", "源行号",
         ]
+        scene_column = next((c.column for c in ws[1] if c.value == "接入场景"), ws.max_column + 1)
+        ws.cell(row=1, column=scene_column, value="接入场景")
+        for row in range(2, ws.max_row + 1):
+            ws.cell(row, scene_column, value=getattr(self, "connection_scene", "company"))
         dynamic_judges = list(dict.fromkeys(identity for fields in row_map.values() for identity in fields.get("judge_details", {}) if identity not in {"qwen", "deepseek"}))
         for identity in dynamic_judges:
             extra_headers.extend([identity + "评分", identity + "原因"])
@@ -337,6 +341,7 @@ class ReportWriter:
         export_xlsx: Optional[Path] = None,
     ) -> Dict[str, str]:
         ensure_dir(self.reports_dir)
+        self.connection_scene = protocol_info.get("connection_scene", "company")
         ts = datetime.now().strftime("%Y%m%d_%H%M%S")
         toy_id = str(protocol_info.get("toy_id") or "").strip() if isinstance(protocol_info, dict) else ""
         prefix = f"{toy_id}_" if toy_id else ""
@@ -356,6 +361,7 @@ class ReportWriter:
             "# 文本输入测试框架摘要",
             "",
             f"- 玩具: {protocol_info.get('toy_id') or '-'}",
+            f"- 接入场景: {protocol_info.get('connection_scene', 'company')} / {protocol_info.get('target_name', '')}",
             f"- 用例总数: {(protocol_info.get('data_precheck') or {}).get('turn_count', sum(len(g.get('turn_results') or []) for g in results))}",
             f"- 类型分组数: {len(results)}",
             f"- 生成时间: {ts}",

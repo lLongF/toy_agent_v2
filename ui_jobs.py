@@ -30,6 +30,8 @@ class JobManager:
         self._processes: dict[str, tuple[subprocess.Popen, Path]] = {}
 
     def start(self, cfg: Config) -> Path:
+        from connection_scenes import prepare_scene_run
+        cfg = prepare_scene_run(cfg)
         with self._lock:
             previous = self._processes.get(cfg.device_mac)
             if previous and previous[0].poll() is None:
@@ -56,7 +58,8 @@ class JobManager:
             for key in ("cases_xlsx", "mcp_tools_file", "judge_template_file", "thresholds_file"):
                 payload[key] = str(payload[key])
             status = {"job_id": job_id, "toy_id": cfg.toy_id, "status": "running",
-                      "started_at": datetime.now().isoformat(), "device_mac": cfg.device_mac}
+                      "started_at": datetime.now().isoformat(), "device_mac": cfg.device_mac,
+                      "connection_scene": cfg.connection_scene, "client_id": cfg.client_id}
             write_status(directory / "job.json", status)
             env = dict(os.environ, PYTHONUNBUFFERED="1", PYTHONUTF8="1", PYTHONIOENCODING="utf-8")
             try:

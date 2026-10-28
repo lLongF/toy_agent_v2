@@ -46,12 +46,20 @@ from testers import ConversationTestDispatcher, build_test_handlers
 async def run_framework(cfg: Config) -> Dict[str, Any]:
     """按测试类型隔离 WebSocket 会话：同一类型内保留上下文，换类型则重建连接。"""
     cfg = replace(cfg, rules_snapshot=cfg.rules_snapshot or load_rules(cfg), run_id=cfg.run_id or uuid4().hex[:12])
-    loaded, tools_origin = discover_tools(cfg.tools_source, cfg.mcp_tools_file)
+    from connection_scenes import validate_scene_cases
+    is_xiaozhi = cfg.connection_scene == "xiaozhi"
+    transport_class = TransportClient
+    if is_xiaozhi:
+        from xiaozhi_connection import XiaozhiTransportClient
+        transport_class = XiaozhiTransportClient
+    loaded, tools_origin = ([], {"type": "disabled", "reason": "xiaozhi_text_only"}) if is_xiaozhi else discover_tools(cfg.tools_source, cfg.mcp_tools_file)
     if cfg.tools_source.get("type") == "mcp_http" and not loaded:
         raise ValueError("远程 MCP 工具清单为空，已阻止评测；不会静默回退本地工具")
-    mcp_tools = loaded if loaded else default_fallback_mcp_tools()
+    mcp_tools = [] if is_xiaozhi else (loaded if loaded else default_fallback_mcp_tools())
     mcp_tools_source = tools_origin.get("url") or str(cfg.mcp_tools_file)
-    if not loaded:
+    if is_xiaozhi:
+        mcp_tools_source = "disabled_text_only"
+    elif not loaded:
         mcp_tools_source = "fallback_ping_only"
     writer = ReportWriter(cfg.reports_dir, sensitive_values=[cfg.token, cfg.api_key, cfg.deepseek_api_key])
 
@@ -64,6 +72,7 @@ async def run_framework(cfg: Config) -> Dict[str, Any]:
     cfg = replace(cfg, rules_snapshot=scoped_rules(cfg, cfg.rules_snapshot))
     validate_case_targets(cfg.rules_snapshot, cfg.toy_id, dialogue_groups)
     dialogue_groups = selected_groups(cfg, source_cases)
+    validate_scene_cases(cfg, dialogue_groups, cfg.rules_snapshot)
     validate_capabilities(cfg, dialogue_groups)
     # 原 CLI 缺文件 ping 回退保留；明确配置的定义必须匹配实际预期。
     if loaded or cfg.tools_source:
@@ -81,12 +90,16 @@ async def run_framework(cfg: Config) -> Dict[str, Any]:
 
     protocol_info = {
         "schema_version": "2",
+        "connection_scene": cfg.connection_scene,
+        "target_name": "小智 AI" if is_xiaozhi else cfg.toy_snapshot.get("name", cfg.toy_id),
+        "client_id": cfg.client_id,
+        "ota_url": cfg.ota_url,
         "dataset_snapshot": cfg.dataset_snapshot,
         "toy_snapshot": cfg.toy_snapshot,
         "environment": cfg.environment,
         "judge_endpoints_snapshot": cfg.judge_endpoints_snapshot,
         "selected_judge_ids": cfg.selected_judge_ids,
-        "tool_execution_mode": "simulated_device_placeholder",
+        "tool_execution_mode": "disabled" if is_xiaozhi else "simulated_device_placeholder",
         "started_at": datetime.now().isoformat(),
         "run_id": cfg.run_id,
         "trigger_type": cfg.trigger_type,
@@ -130,7 +143,8 @@ async def run_framework(cfg: Config) -> Dict[str, Any]:
     ws_token = cfg.token
     try:
         ota_state = RuntimeState(mcp_tools=list(mcp_tools))
-        ota_transport = TransportClient(cfg, ota_state, MessageRouter(ota_state))
+        ota_transport = transport_class(cfg, ota_state, MessageRouter(ota_state))
+        print(f"接入场景: {'小智 AI' if is_xiaozhi else '公司玩具'}  Client-Id={cfg.client_id}", flush=True)
         print(
             f"玩具: {cfg.toy_id}  Device-Id={cfg.device_mac}",
             flush=True,
@@ -142,8 +156,25 @@ async def run_framework(cfg: Config) -> Dict[str, Any]:
         protocol_info["ota_error"] = ota_result.get("error")
         protocol_info["ota_request"] = ota_result.get("request")
         ota_data = ota_result.get("data") if isinstance(ota_result.get("data"), dict) else {}
+        if is_xiaozhi:
+            activation = ota_data.get("activation") or {}
+            protocol_info["ota_activation"] = {"present": bool(activation),
+                "has_code": bool(activation.get("code")) if isinstance(activation, dict) else False,
+                "has_challenge": bool(activation.get("challenge")) if isinstance(activation, dict) else False}
+            print(f"小智 OTA 激活信息: present={bool(activation)}（仅记录状态，不输出激活码）", flush=True)
+            # MQTT credentials/activation challenges are not used in text evaluation.
+            ota_data = {k: v for k, v in ota_data.items() if k in {"websocket", "server_time"}}
+            if not ota_data.get("websocket") and (ota_result.get("data") or {}).get("activation"):
+                ota_result["error"] = "小智 OTA 尚未提供可用 WS 地址，请检查激活状态"
         protocol_info["ota_response"] = ota_data
         ota_ws_url, ota_ws_token = TransportClient.extract_websocket_from_ota(ota_data)
+        if is_xiaozhi and ota_ws_url:
+            from urllib.parse import urlsplit
+            address = urlsplit(ota_ws_url)
+            if address.scheme not in {"ws", "wss"} or not address.hostname or address.username or address.password:
+                ota_ws_url = ""
+                ota_result["error"] = "小智 OTA 返回无效的 WebSocket 地址"
+        protocol_info["ota_error"] = ota_result.get("error")
         protocol_info["ota_ok"] = bool(ota_result.get("ok") and ota_ws_url)
         if ota_ws_url:
             ws_url = ota_ws_url
@@ -151,6 +182,8 @@ async def run_framework(cfg: Config) -> Dict[str, Any]:
         if ota_ws_token:
             ws_token = ota_ws_token
             writer.sensitive_values.append(ota_ws_token)
+            if isinstance(sys.stdout, SafeLog):
+                sys.stdout.secrets = [*sys.stdout.secrets, ota_ws_token]
         print(
             f"OTA 结果: ok={protocol_info['ota_ok']} status={ota_result.get('status')} "
             f"websocket.url={ws_url or '(empty)'}",
@@ -172,8 +205,10 @@ async def run_framework(cfg: Config) -> Dict[str, Any]:
                 flush=True,
             )
             state = RuntimeState(mcp_tools=list(mcp_tools))
-            router = MessageRouter(state)
-            transport = TransportClient(cfg, state, router)
+            router = MessageRouter(state, tts_sentence_only=is_xiaozhi)
+            transport = transport_class(cfg, state, router)
+            if is_xiaozhi:
+                transport.ws_version = getattr(ota_transport, "ws_version", 1)
             pipeline = TextInteractionPipeline(state, cfg)
             ctx = TestContext(cfg=cfg, state=state, transport=transport, pipeline=pipeline)
             protocol_info["ws_stats"]["session_count"] += 1
@@ -186,7 +221,7 @@ async def run_framework(cfg: Config) -> Dict[str, Any]:
                     group_result = {
                         "handler": "default",
                         "status": "skipped",
-                        "reason": "websocket not connected",
+                        "reason": getattr(transport, "last_connect_error", "") or "websocket not connected",
                         "turn_results": [],
                         "group_pass": False,
                     }
@@ -209,6 +244,16 @@ async def run_framework(cfg: Config) -> Dict[str, Any]:
                         handlers, default_handler = build_test_handlers(ctx)
                         dispatcher = ConversationTestDispatcher(handlers, default_handler)
                         group_result = await dispatcher.run_group(ctx, group)
+            except Exception:
+                if is_xiaozhi:
+                    protocol_info["failed_session"] = {
+                        "category": group.category,
+                        "received_events": [{"type": item.get("type"),
+                                             "state": (item.get("message") or {}).get("state")}
+                                            for item in state.router_logs[-30:]],
+                        "partial_text": state.get_full_server_response_text()}
+                    print(f"小智会话中断，收到 {len(state.router_logs)} 条协议事件；诊断已保存至报告。", flush=True)
+                raise
             finally:
                 if state.websocket:
                     try:

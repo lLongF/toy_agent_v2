@@ -51,6 +51,8 @@ def device_lock(device_mac):
 def exclusive_device(function):
     @wraps(function)
     async def wrapped(cfg):
+        from connection_scenes import prepare_scene_run
+        cfg = prepare_scene_run(cfg)
         with device_lock(cfg.device_mac):
             # 保持整轮采集和最终 Excel 使用同一份数据，不受运行中资产编辑影响。
             with tempfile.TemporaryDirectory(prefix="toy-eval-source-") as temporary:

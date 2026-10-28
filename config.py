@@ -394,6 +394,8 @@ class Config:
     selected_judge_ids: Optional[List[str]] = None
     judge_endpoints_snapshot: List[Dict[str, Any]] = field(default_factory=list)
     judge_credentials: Dict[str, str] = field(default_factory=dict)
+    connection_scene: str = "company"
+    scene_identity_generated: bool = False
 
 # 连接与消息搜集
 @dataclass

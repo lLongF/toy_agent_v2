@@ -89,7 +89,8 @@ def reports_for(toy):
 def report_label(report):
     p = report["protocol"]
     stamp = p.get("started_at") or report.get("job", {}).get("started_at") or "时间无记录"
-    return f'{stamp[:19].replace("T", " ")} · {report["path"].name}'
+    scene = "小智 AI" if p.get("connection_scene") == "xiaozhi" else "公司玩具"
+    return f'{stamp[:19].replace("T", " ")} · {scene} · {report["path"].name}'
 
 
 def report_meta(report):
@@ -98,7 +99,8 @@ def report_meta(report):
     state = {"completed": "执行完成", "failed": "执行失败", "running": "运行中"}.get(job.get("status"), "状态无记录")
     if p.get("run_aborted"):
         state = "执行中断"
-    return f'{p.get("toy_id", "玩具无记录")}  /  {trigger}  /  {state}  /  运行 ID：{p.get("run_id") or job.get("job_id") or "无记录"}'
+    scene_label = "小智 AI" if p.get("connection_scene") == "xiaozhi" else "公司玩具"
+    return f'{scene_label} / {p.get("toy_id", "玩具无记录")}  /  {trigger}  /  {state}  /  运行 ID：{p.get("run_id") or job.get("job_id") or "无记录"}'
 
 
 def category_table(report):
@@ -206,6 +208,11 @@ def show_report(report):
                 content = json.dumps(redact_data(json.loads(content)), ensure_ascii=False, indent=2).encode()
             st.download_button(f"{file.suffix[1:].upper()} · {file.name}", content, file_name=file.name, key=str(file))
         st.caption("只提供当前运行已存在的文件。JSON 凭据字段会脱敏。")
+        st.json({"接入场景": report["protocol"].get("connection_scene", "company"),
+                 "测评对象": report["protocol"].get("target_name", report["protocol"].get("toy_id")),
+                 "Device-Id": report["protocol"].get("device_mac"),
+                 "Client-Id": report["protocol"].get("client_id"),
+                 "OTA": report["protocol"].get("ota_url"), "WebSocket": report["protocol"].get("ws_url")})
         snapshot = report["protocol"].get("evaluation_rules")
         if snapshot:
             st.json({k: snapshot.get(k) for k in ["version", "template_sha256", "thresholds", "overrides", "case_thresholds"]})
@@ -478,15 +485,34 @@ def execution(toy, groups):
                                   for g in selected for t in g.turns], hide_index=True, width="stretch")
             if cfg.rules_snapshot:
                 rules_management(cfg, groups)
-            with st.expander("凭据（仅本次会话）"):
-                st.caption("留空沿用环境变量或 toy.json；不显示已有凭据值。")
-                token = st.text_input("玩具 Token", type="password", key="run_token")
+            with st.expander("凭据（仅本次会话）", expanded=True):
+                from connection_scenes import SCENE_LABELS
+                scene = st.radio("接入场景", list(SCENE_LABELS), format_func=SCENE_LABELS.get,
+                                 horizontal=True, key="connection_scene")
+                if st.session_state.get("previous_connection_scene") != scene:
+                    st.session_state.pop("run_token", None)
+                    st.session_state.pop("current_job", None)
+                    st.session_state.pop("last_job_status", None)
+                    st.session_state["previous_connection_scene"] = scene
+                if scene == "company":
+                    st.caption("输入本次公司玩具 Token；留空沿用该玩具的已有凭据。")
+                    token = st.text_input("玩具 Token", type="password", key="run_token")
+                else:
+                    token = ""
+                    st.info("小智 AI：复用已在 Apifox 验证成功的设备身份；每轮重新通过 OTA 获取 WS 地址与 Token，无需公司玩具 Token。")
+                    from connection_scenes import XIAOZHI_DEVICE_ID, XIAOZHI_CLIENT_ID
+                    st.caption(f"Device-Id：{XIAOZHI_DEVICE_ID} · Client-Id：{XIAOZHI_CLIENT_ID}")
+                    st.caption("首期请选择基础问答、反向安全、情感交互文本用例；不注入公司设备工具。")
                 qwen_key = st.text_input("Qwen API Key", type="password", key="run_qwen")
                 ds_key = st.text_input("DeepSeek API Key", type="password", key="run_ds")
             cfg.token = token.strip()
             environment_error = None
             try:
-                cfg = apply_toy_environment(cfg, toy, environment)
+                if scene == "company":
+                    cfg = apply_toy_environment(cfg, toy, environment)
+                else:
+                    from connection_scenes import configure_scene
+                    cfg = configure_scene(cfg, scene)
             except ValueError as exc:
                 environment_error = redact_text(str(exc))
             cfg.api_key = qwen_key.strip() or cfg.api_key
@@ -498,8 +524,12 @@ def execution(toy, groups):
             except (OSError, ValueError) as exc:
                 judge_error = redact_text(str(exc))
             with st.expander("高级连接参数"):
-                cfg.device_mac = st.text_input("设备 MAC", cfg.device_mac, key="device_mac_" + toy.id + environment)
-                cfg.ota_url = st.text_input("OTA URL", cfg.ota_url, key="ota_" + toy.id + environment)
+                if scene == "company":
+                    cfg.device_mac = st.text_input("设备 MAC", cfg.device_mac, key="device_mac_" + toy.id + environment)
+                    cfg.ota_url = st.text_input("OTA URL", cfg.ota_url, key="ota_" + toy.id + environment)
+                else:
+                    st.caption("OTA：" + cfg.ota_url)
+                    st.caption("WebSocket：使用本次 OTA 响应，不沿用公司地址。设备身份跨运行复用。")
                 cfg.response_collect_timeout = st.number_input("单条回复超时（秒）", min_value=1.0, value=45.0)
                 cfg.judge_concurrency = int(st.number_input("评分并发", min_value=1, max_value=32, value=6))
             cfg.selected_categories, cfg.selected_case_rows = categories, selected_rows

@@ -30,12 +30,14 @@ def validate_request(cfg):
     if any(not t.user_messages or not t.expected_outcome for g in groups for t in g.turns):
         raise ValueError("所选用例有空消息或缺少预期结果，请检查 Excel")
     from dataclasses import replace
+    from connection_scenes import validate_scene_cases
+    validate_scene_cases(cfg, groups, rules)
     validate_capabilities(replace(cfg, rules_snapshot=rules), groups)
     tools = load_mcp_tools_from_txt(cfg.mcp_tools_file)
     validate_source(cfg.tools_source)
     if cfg.tools_source.get("type") != "mcp_http":
         validate_expected_tools(groups, tools, rules)
-    if not cfg.token.strip():
+    if cfg.connection_scene == "company" and not cfg.token.strip():
         raise ValueError("缺少玩具 Token：填写凭据或配置凭据引用环境变量")
     needs_judge = any(rules.get("category_bases", {}).get(g.category, g.category) != "MCP调用" or any(not t.expect_tool_call for t in g.turns) for g in groups)
     if needs_judge:
