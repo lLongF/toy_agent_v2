@@ -1,0 +1,82 @@
+{
+					"name": "self.audio_speaker.set_volumes",
+					"description": "用于调节本设备的播放音量. 当用户意图涉及改变音量时必须调用. 支持的语义包括: 1. 具体数值设置（如：调到百分之30 或 设置音量为50; 2. 相对增减 (如: 音量调大点 或 声音调小) 范围：0-100",
+					"inputSchema": {
+						"type": "object",
+						"properties": {
+							"volume": {
+								"type": "integer",
+								"minimum": 0,
+								"maximum": 100
+							}
+						},
+						"required": [
+							"volume"
+						]
+					}
+				},
+				{
+					"name": "self.get_battery",
+					"description": "获取设备电量的百分比,当用户需要知道电量时调用该工具,并告诉对方,电量值百分比为0-100,100为满电",
+					"inputSchema": {
+						"type": "object",
+						"properties": {}
+					}
+				},
+{
+    "type": "function",
+    "function": {
+        "name": "get_weather",
+        "description": (
+            "【强制触发条件】仅当用户明确提到“天气”、“气温”、“下雨”等词汇时调用,如果用户没具体说明城市时，直接使用空参数调用本工具即可。禁止在闲聊、讲故事、放音乐场景下误触发。"
+            "【参数填充逻辑】"
+            "1. 只有用户【明确说出】地名（如北京、上海、四川）时，才填写 location。如果用户没具体说明城市时，直接使用空参数调用本工具即可。"
+            "2. 若用户【未提地点】（如“今天天气如何”、“外面冷吗”、“会下雨吗”），必须保持 location 为空，严禁自行猜测或填入默认城市。"
+            "3. 地名统一格式化为“xx市”。"
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "location": {
+                    "type": "string",
+                    "description": "仅限用户原话中出现的城市名。若原话无城市名，严禁传此参数。",
+                },
+            },
+            "required": [],
+        },
+    },
+},
+{
+    "type": "function",
+    "function": {
+        "name": "handle_shutdown_intent",
+        "description": (
+            "关闭当前物理设备。当用户说关机、请关机、关掉吧、关机吧、关闭电源、晚安，"
+            "或明确要求关闭设备、关闭机器、关闭机器人时，"
+            "必须调用本函数。仅仅结束对话、告别、说再见、拜拜或不想继续聊天时，"
+            "不能调用本函数，应调用 handle_exit_intent。"
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {},
+        },
+    },
+},
+{
+    "type": "function",
+    "function": {
+        "name": "handle_exit_intent",
+        "description": "结束当前对话并执行退出流程。\n\n当用户表达任何“结束对话 / 告别 / 离开 / 不再继续交流”的意图时，必须调用本函数，不能只用文字回复告别。\n\n必须触发的情况包括但不限于：\n1. 明确告别：再见、拜拜、bye、goodbye、see you、回头见、下次见、我先走了、我下了。\n2. 明确结束：结束对话、退出、关闭对话、停止聊天、不聊了、就这样吧、先这样、到此为止、今天先到这。\n3. 离开或休息：我得走了、我要去忙了、我困了、我要睡了、先不说了、有事先走。\n4. 混合表达：即使用户同时提出其他内容，只要包含结束、告别、离开、停止交流等信号，也应优先调用本函数。\n\n调用要求：\n- 必须调用本函数完成退出流程。\n- 参数中传入一句自然、友好的告别语。\n- 不允许仅回复“再见”“祝你生活愉快”等文字而不调用函数。\n- 用户说“晚安”，或要求关机、关闭设备、关闭机器、关闭机器人时不得调用本函数，必须调用 handle_shutdown_intent。\n\n判断原则：本函数只结束对话，不关闭物理设备。",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "say_goodbye": {
+                    "type": "string",
+                    "description": "向用户发出的友好告别语，用于确认对话结束。需结合对话上下文，生成自然、亲切的告别文案。例如：“好的，期待下次再见！”“拜拜，祝您今天愉快！”"
+                }
+            },
+            "required": ["say_goodbye"]
+        }
+    }
+}
+

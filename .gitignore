@@ -1,0 +1,26 @@
+# Python
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+
+# IDE / OS
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+.streamlit/secrets.toml
+build/
+dist/
+.backups/
+*.edit.lock
+.triggers/
+.runtime/
+
+# Excel 临时锁文件
+~$*
+
+# 测试输出（保留空目录）
+reports/*
+!reports/.gitkeep

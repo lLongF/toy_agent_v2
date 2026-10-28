@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "case_types": [
+    {
+      "name": "用户反馈问题",
+      "base_category": "基础问答",
+      "rubric": "123",
+      "threshold": 0.7
+    }
+  ]
+}

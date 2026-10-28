@@ -1,0 +1,12 @@
+[project]
+name = "toy-agent-eval"
+version = "0.1.0"
+description = "玩具 Agent 文本评测引擎与 Streamlit 评测台"
+requires-python = ">=3.11,<3.12"
+dynamic = ["dependencies"]
+
+[tool.setuptools.dynamic]
+dependencies = {file = ["requirements.txt"]}
+
+[tool.setuptools]
+py-modules = ["cli", "collection", "config", "daily_run", "judge", "mcp", "notify_wecom", "report", "testers", "text_input_test", "toy_profiles", "ui_jobs", "ui_worker", "streamlit_app", "evaluation_support", "safe_output", "ui_request", "ui_results", "ui_styles", "asset_store", "tools_source", "ui_management", "trigger_run", "trigger_control", "execution_lock", "toy_management", "dataset_store", "evaluation_selection", "ui_catalogs", "local_credentials", "category_store", "judge_store", "ui_scoring"]

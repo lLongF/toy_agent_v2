@@ -1,0 +1,5 @@
+{
+  "description": "默认沿用 CLI 的 0.7；可从页面保存分类 thresholds 和单条 case_thresholds。只对下一轮生效，不重判历史结果。MCP 强制调用仍走原规则。",
+  "thresholds": {},
+  "case_thresholds": []
+}

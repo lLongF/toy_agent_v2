@@ -1,0 +1,10 @@
+{
+  "cases_xlsx": "../../data/测试样例.xlsx",
+  "mcp_tools_file": "D:\\Project\\toy_agent-main\\toy_agent-main\\data\\工具描述.txt",
+  "name": "曦仔",
+  "credential_ref": "local:52b2198b7fba4f229123decedeb5007a",
+  "capabilities": null,
+  "environments": {},
+  "enabled": true,
+  "tools_source": {}
+}

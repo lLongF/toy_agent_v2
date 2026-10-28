@@ -1,0 +1,25 @@
+[server]
+headless = true
+address = "127.0.0.1"
+
+[browser]
+gatherUsageStats = false
+
+[theme]
+base = "light"
+primaryColor = "#6269e8"
+backgroundColor = "#f6f8fc"
+secondaryBackgroundColor = "#ffffff"
+textColor = "#25324b"
+borderColor = "#e6eaf2"
+baseRadius = "0.75rem"
+buttonRadius = "0.6rem"
+showWidgetBorder = true
+dataframeHeaderBackgroundColor = "#f4f6fb"
+
+[theme.sidebar]
+backgroundColor = "#161e30"
+secondaryBackgroundColor = "#222c41"
+textColor = "#c9d1e3"
+primaryColor = "#a5adff"
+borderColor = "#34405a"

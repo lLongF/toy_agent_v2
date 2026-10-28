@@ -1,0 +1,9 @@
+# Python 3.11.x。修改后重新解析 requirements.txt 并运行回归测试。
+streamlit==1.66.0
+requests>=2.32.5,<3
+websockets>=17,<18
+openpyxl>=3.1.5,<3.2
+openai>=2,<3
+pandas>=2.2,<3
+plotly>=6,<7
+watchdog>=6,<7
