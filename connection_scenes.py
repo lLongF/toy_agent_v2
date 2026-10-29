@@ -39,3 +39,26 @@ def validate_scene_cases(cfg, groups, rules):
         if any(rules.get("category_bases", {}).get(g.category, g.category) not in TEXT_CATEGORIES
                or any(t.expect_tool_call for t in g.turns) for g in groups):
             raise ValueError("小智 AI 首期仅支持基础问答、反向安全、情感交互及对应自定义类型；请按类别选择文本用例，不包含强制设备工具")
+
+
+def validate_connection_mode(cfg):
+    """Direct endpoints carry credentials separately, never inside saved URLs."""
+    from urllib.parse import urlsplit
+    if cfg.connection_mode not in {"ota", "direct"}:
+        raise ValueError("未知连接方式")
+    if cfg.connection_mode == "direct":
+        if cfg.connection_scene != "company":
+            raise ValueError("直连模式仅支持公司玩具协议")
+        try:
+            address = urlsplit(cfg.ws_url)
+            port = address.port
+            if (address.scheme not in {"ws", "wss"} or not address.hostname
+                    or address.username is not None or address.password is not None
+                    or address.query or address.fragment or "?" in cfg.ws_url or "#" in cfg.ws_url
+                    or any(c.isspace() for c in cfg.ws_url) or "\\" in cfg.ws_url
+                    or (port is not None and not 1 <= port <= 65535)):
+                raise ValueError
+        except ValueError:
+            raise ValueError("WebSocket 地址必须为有效的 WS(S) URL，不包含凭据、查询参数或片段；Token 请单独填写") from None
+        if not cfg.token.strip() or not cfg.device_mac.strip() or not cfg.client_id.strip():
+            raise ValueError("直连模式需要玩具 Token、设备 MAC 和客户端 ID")

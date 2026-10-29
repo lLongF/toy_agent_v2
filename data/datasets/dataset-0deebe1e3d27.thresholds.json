@@ -7,7 +7,7 @@
       "dataset_id": "dataset-0deebe1e3d27",
       "category": "基础问答",
       "case_id": "1",
-      "threshold": 0.8,
+      "threshold": 0.9,
       "expect_tool_call": false,
       "sheet_row": 2
     },

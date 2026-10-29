@@ -22,6 +22,36 @@ def write_status(path: Path, data: dict) -> None:
     temporary.replace(path)
 
 
+def stop_job(manager, directory: Path) -> bool:
+    """只终止管理器持有的指定任务；退出后再保存停止状态，避免与 worker 写入竞争。"""
+    directory = Path(directory).resolve()
+    with manager._lock:
+        owned = next(((process, path) for process, path in manager._processes.values()
+                      if path.resolve() == directory), None)
+        if owned is None:
+            raise ValueError("当前服务未持有该任务进程，无法安全停止；请勿重复启动该设备任务。")
+        process, _ = owned
+        if process.poll() is not None:
+            return False
+        try:
+            process.terminate()
+        except ProcessLookupError:
+            return False
+        try:
+            process.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            process.kill()
+            process.wait(timeout=5)
+        status_path = directory / "job.json"
+        status = json.loads(status_path.read_text(encoding="utf-8"))
+        if status["status"] != "running":
+            return False
+        status.update(status="stopped", finished_at=datetime.now().isoformat(), stop_reason="用户主动停止")
+        status.pop("error", None)
+        write_status(status_path, status)
+        return True
+
+
 class JobManager:
     """只共享进程句柄，设备级互斥；不共享协议状态或用户密钥。"""
 
@@ -59,7 +89,9 @@ class JobManager:
                 payload[key] = str(payload[key])
             status = {"job_id": job_id, "toy_id": cfg.toy_id, "status": "running",
                       "started_at": datetime.now().isoformat(), "device_mac": cfg.device_mac,
-                      "connection_scene": cfg.connection_scene, "client_id": cfg.client_id}
+                      "connection_scene": cfg.connection_scene, "client_id": cfg.client_id,
+                      "trigger_type": cfg.trigger_type, "release_environment": cfg.release_environment,
+                      "target_name": cfg.toy_snapshot.get("name", cfg.toy_id)}
             write_status(directory / "job.json", status)
             env = dict(os.environ, PYTHONUNBUFFERED="1", PYTHONUTF8="1", PYTHONIOENCODING="utf-8")
             try:
@@ -87,6 +119,11 @@ class JobManager:
         with self._lock:
             previous = self._processes.get(device_mac)
             return bool(previous and previous[0].poll() is None)
+
+    def active_job(self, device_mac: str):
+        with self._lock:
+            previous = self._processes.get(device_mac)
+            return previous[1] if previous and previous[0].poll() is None else None
 
     def refresh(self) -> None:
         with self._lock:

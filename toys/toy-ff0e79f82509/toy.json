@@ -2,7 +2,11 @@
   "name": "仪宝",
   "credential_ref": "local:c96cff2178d440449ef842e048bc3110",
   "capabilities": {
-    "text": "supported"
+    "text": "supported",
+    "context": "supported",
+    "knowledge_base": "supported",
+    "tool_injection": "supported",
+    "tool_observation": "supported"
   },
   "environments": {},
   "enabled": true,

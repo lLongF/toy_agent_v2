@@ -2,6 +2,10 @@
 from __future__ import annotations
 
 import json
+import os
+import shutil
+from contextlib import contextmanager
+from uuid import uuid4
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -179,3 +183,91 @@ def save_dataset_thresholds(dataset, thresholds, expected_hash, root=None):
     payload = _normalize(dataset, {"version": 1, "dataset_id": did, "dataset_sha256": sha,
                                    "case_thresholds": thresholds.get("case_thresholds", thresholds.get("thresholds", []))}, root)
     return atomic_json(thresholds_path(dataset, root), payload, expected_hash, root)
+
+
+def _remap_cases(dataset, raw, previous_path, next_path, root):
+    """按类别和编号保留阈值，更新行号；新用例沿用默认值，删除项移除。"""
+    from config import load_dialogue_groups_from_xlsx
+    previous = {"id": _dataset_id(dataset), "path": previous_path}
+    checked = _normalize(previous, raw, root)
+    old = {(g.category, str(t.case_id)): t for g in load_dialogue_groups_from_xlsx(previous_path) for t in g.turns}
+    current = {(g.category, str(t.case_id)): t for g in load_dialogue_groups_from_xlsx(next_path) for t in g.turns}
+    cases = []
+    for item in checked["case_thresholds"]:
+        key = (item["category"], item["case_id"])
+        before, after = old.get(key), current.get(key)
+        if not before or not after or ("sheet_row" in item and item["sheet_row"] != before.sheet_row):
+            continue
+        entry = dict(item, sheet_row=after.sheet_row, expect_tool_call=bool(after.expect_tool_call))
+        if _mcp(item["category"], bool(after.expect_tool_call)):
+            entry["threshold"] = MCP_THRESHOLD
+        # 工具标志变化后，旧 embedded_rule 模式不能强制文本用例沿用硬规则。
+        entry.pop("evaluation_mode", None)
+        cases.append(entry)
+    return {"version": 1, "dataset_id": _dataset_id(dataset),
+            "dataset_sha256": file_hash(next_path), "case_thresholds": cases}
+
+
+@contextmanager
+def case_threshold_transaction(path, candidate, root):
+    """与 Excel 共用保存锁；阈值全部预校验、加锁后才允许替换 Excel。"""
+    from dataset_store import load_registry
+    from toy_profiles import list_toy_profiles, safe_path
+    root = Path(root).resolve()
+    datasets = {d.id: d for d in load_registry(root) if d.path.resolve() == path.resolve()}
+    for toy in list_toy_profiles(root / "toys"):
+        if toy.cases_xlsx.resolve() == path.resolve():
+            datasets["legacy-" + toy.id] = {"id": "legacy-" + toy.id, "path": path}
+    staged, locks, committed = [], [], []
+    try:
+        for identity in sorted(datasets):
+            dataset = datasets[identity]
+            sidecar = safe_path(thresholds_path(dataset, root), root)
+            lock = sidecar.with_name(sidecar.name + ".edit.lock")
+            sidecar.parent.mkdir(parents=True, exist_ok=True)
+            try:
+                descriptor = os.open(lock, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+            except FileExistsError:
+                raise ValueError("测试集阈值正在保存，请稍后重试") from None
+            os.close(descriptor)
+            locks.append(lock)
+            if not sidecar.exists():
+                continue
+            original = sidecar.read_bytes()
+            payload = _remap_cases(dataset, json.loads(original), path, candidate, root)
+            temporary = sidecar.with_name("." + uuid4().hex + ".tmp")
+            staged.append((sidecar, temporary, original))
+            temporary.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        yield
+        for sidecar, temporary, original in staged:
+            backup_dir = safe_path(sidecar.parent / ".backups", root)
+            backup_dir.mkdir(exist_ok=True)
+            shutil.copy2(sidecar, backup_dir / (uuid4().hex + "_" + sidecar.name))
+            temporary.replace(sidecar)
+            committed.append((sidecar, temporary, original))
+    except Exception:
+        for sidecar, temporary, original in reversed(committed):
+            temporary.write_bytes(original)
+            temporary.replace(sidecar)
+        raise
+    finally:
+        for _, temporary, _ in staged:
+            temporary.unlink(missing_ok=True)
+        for lock in locks:
+            lock.unlink(missing_ok=True)
+
+
+def repair_dataset_thresholds(dataset, expected_hash, root=None):
+    """仅从 hash 匹配的已有 Excel 备份迁移阈值，不猜测旧行身份。"""
+    root = _root(root)
+    path = _dataset_path(dataset, root)
+    sidecar = thresholds_path(dataset, root)
+    if file_hash(sidecar) != expected_hash:
+        raise ValueError("阈值已修改，请重新加载")
+    raw = json.loads(sidecar.read_text(encoding="utf-8"))
+    backup = next((p for p in (path.parent / ".backups").glob("*" + path.name)
+                   if file_hash(p) == raw.get("dataset_sha256")), None)
+    if backup is None:
+        raise ValueError("缺少与旧阈值匹配的用例备份，不能自动恢复")
+    payload = _remap_cases(dataset, raw, backup, path, root)
+    return save_dataset_thresholds(dataset, payload, expected_hash, root)

@@ -817,6 +817,8 @@ def post_judge_results(results: List[Dict[str, Any]], cfg: Config) -> Dict[str, 
     workers = max(1, int(cfg.judge_concurrency or 1))
     endpoints = judge_instances[0].judges if judge_instances else []
     judge_names = [j.endpoint.name for j in endpoints]
+    from run_progress import update_progress
+    update_progress(cfg, "裁判评分", 0, len(jobs))
     if jobs:
         print(
             f"第二阶段评分：{len(jobs)} 条，并发 {min(workers, len(jobs))}，"
@@ -824,13 +826,15 @@ def post_judge_results(results: List[Dict[str, Any]], cfg: Config) -> Dict[str, 
             flush=True,
         )
         if workers == 1 or len(jobs) == 1:
-            for job in jobs:
+            for index, job in enumerate(jobs, start=1):
                 job()
+                update_progress(cfg, "裁判评分", index, len(jobs))
         else:
             with ThreadPoolExecutor(max_workers=min(workers, len(jobs))) as pool:
                 futures = [pool.submit(job) for job in jobs]
-                for fut in as_completed(futures):
+                for index, fut in enumerate(as_completed(futures), start=1):
                     fut.result()
+                    update_progress(cfg, "裁判评分", index, len(jobs))
 
     for group in results:
         turn_results = group.get("turn_results") or []

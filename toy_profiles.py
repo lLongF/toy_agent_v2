@@ -15,6 +15,8 @@ DEFAULT_TOY_ID = "default"  # 不传 --toy 时使用
 TEMPLATE_TOY_ID = "_template"  # 复制用模板，不会出现在 --list-toys
 CASES_FILENAME = "测试样例.xlsx"  # 玩具目录内默认用例文件名
 TOOLS_FILENAME = "工具描述.txt"  # 玩具目录内默认工具清单文件名
+ALL_CAPABILITIES = {key: "supported" for key in (
+    "text", "context", "knowledge_base", "tool_injection", "tool_observation")}
 
 
 @dataclass

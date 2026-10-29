@@ -31,6 +31,11 @@ def main() -> int:
             if payload.get(key) is not None:
                 payload[key] = Path(payload[key])
         cfg = Config(**payload)
+        status.update(trigger_type=cfg.trigger_type, release_environment=cfg.release_environment,
+                      target_name=cfg.toy_snapshot.get("name", cfg.toy_id))
+        write_status(status_path, status)
+        from run_progress import update_progress
+        update_progress(cfg, "启动前校验")
         validate_request(cfg)
         def timed_out():
             timeout_status = dict(status, status="failed", error="评测超过 4 小时运行上限，任务已终止。",

@@ -44,7 +44,19 @@ def atomic_update(path, expected_hash, builder, allowed_root=ROOT):
         backup_dir.mkdir(exist_ok=True, mode=0o700)
         backup = backup_dir / (datetime.now().strftime("%Y%m%d_%H%M%S") + "_" + uuid4().hex[:8] + "_" + path.name)
         shutil.copy2(path, backup)
-        temporary.replace(path)
+        from contextlib import nullcontext
+        from dataset_thresholds import case_threshold_transaction
+        transaction = case_threshold_transaction(path, temporary, allowed_root) if path.suffix.lower() == ".xlsx" else nullcontext()
+        replaced = False
+        try:
+            with transaction:
+                temporary.replace(path)
+                replaced = True
+        except Exception:
+            if replaced:
+                shutil.copy2(backup, temporary)
+                temporary.replace(path)
+            raise
         return backup
     finally:
         temporary.unlink(missing_ok=True)

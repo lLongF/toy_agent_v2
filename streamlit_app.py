@@ -28,7 +28,8 @@ from ui_management import cases_management, tools_management, rules_management, 
 from asset_store import case_issues
 
 LIVE_CHAT_PAGE = "玩具实时对话"
-PAGES = ["评测总览", "用例与工具管理", "评测配置与执行", "结果分析", "玩具管理", LIVE_CHAT_PAGE]
+RELEASE_PAGE = "发版自测"
+PAGES = ["评测总览", "用例与工具管理", "评测配置与执行", "结果分析", "玩具管理", LIVE_CHAT_PAGE, RELEASE_PAGE]
 LIVE_CHAT_URLS = {
     "曦仔": "https://lycheeai-muxi-test.pages.dev/?mac=02:00:00:00:00:0b&productName=%E6%9B%A6%E4%BB%94",
     "粤悦": "https://lycheeai-muxi-test.pages.dev/?mac=02:00:00:00:00:0c&productName=%E5%B9%BF%E7%94%B5-%E7%B2%A4%E6%82%A6",
@@ -41,7 +42,7 @@ st.set_page_config(page_title="Agent 评测工作台", page_icon=":material/expe
 
 
 @st.cache_resource
-def job_manager():
+def job_manager(implementation_version=2):
     return JobManager()
 
 
@@ -49,6 +50,12 @@ def navigate(page, report=None):
     st.session_state["navigation"] = page
     if report is not None:
         st.session_state["report_target"] = str(report)
+
+
+def open_release_report(path):
+    report = read_report(Path(path), ROOT / "reports")
+    st.session_state["release_report_pending"] = {
+        "toy_id": report["protocol"]["toy_id"], "path": str(path)}
 
 
 def base_config(toy):
@@ -383,7 +390,7 @@ def live_job(cfg=None):
     st.session_state["last_job_status"] = status["status"]
     if previous == "running" and status["status"] != "running":
         st.rerun(scope="app")
-    label = {"running": "运行中", "completed": "执行完成", "failed": "执行失败"}.get(status["status"], "状态未知")
+    label = {"running": "运行中", "completed": "执行完成", "failed": "执行失败", "stopped": "已停止"}.get(status["status"], "状态未知")
     st.subheader(label)
     st.caption(f'{status["job_id"]} · 开始于 {status.get("started_at", "无记录")[:19].replace("T", " ")}')
     if status.get("error"):
@@ -472,9 +479,7 @@ def execution(toy, groups):
             fast = st.toggle("Fast 模式", help="沿用 CLI 已有的握手与收尾等待参数")
         with st.container(border=True):
             st.markdown("### 02 · 评分规则")
-            from ui_scoring import judge_management
             from judge_store import list_judge_models
-            judge_management()
             catalog = {item["id"]: item for item in list_judge_models() if item["enabled"]}
             chosen_judges = st.multiselect("本次评分裁判模型", list(catalog), default=[key for key in ("qwen", "deepseek") if key in catalog],
                                            format_func=lambda key: catalog[key]["name"] + " · " + catalog[key]["model"], key="selected_judges")
@@ -642,9 +647,39 @@ def chat_demo():
     live_chat_page(name)
 
 
+def release_demo():
+    """独立演示入口，复用平台自测和报告，不创建另一套执行逻辑。"""
+    st.set_page_config(page_title="发版自测", initial_sidebar_state="collapsed")
+    apply_styles()
+    st.markdown("""<style>
+        [data-testid="stSidebar"], [data-testid="stSidebarCollapsedControl"],
+        [data-testid="stHeader"] {display:none;}
+        [data-testid="stMainBlockContainer"] {max-width:1440px;}
+        </style>""", unsafe_allow_html=True)
+    target = st.session_state.get("release_demo_report")
+    if target:
+        st.title("发版自测结果")
+        if st.button("← 返回发版自测", key="release_demo_back"):
+            st.session_state.pop("release_demo_report", None)
+            st.rerun()
+        try:
+            show_report(read_report(Path(target), ROOT / "reports"))
+        except (OSError, ValueError, KeyError) as exc:
+            st.error("报告读取失败：" + redact_text(str(exc)))
+        return
+    from ui_release import release_page
+    def open_report(path):
+        st.session_state["release_demo_report"] = str(path)
+    release_page(list_toy_profiles(), base_config, job_manager(), ROOT / "reports", detail_panel, open_report)
+
+
 def main():
     apply_styles()
     toys = list_toy_profiles()
+    pending = st.session_state.pop("release_report_pending", None)
+    if pending:
+        st.session_state["toy_choice"] = pending["toy_id"]
+        st.session_state["navigation"] = PAGES[3]
     with st.sidebar:
         st.markdown('<div class="brand"><div class="brand-icon">a</div><div><div class="brand-title">Agent Eval</div><div class="brand-sub">QUALITY WORKSPACE</div></div></div>', unsafe_allow_html=True)
         if not toys:
@@ -657,6 +692,8 @@ def main():
                         "current_job", "report_target", "result_categories", "result_statuses", "result_query", "result_detail", "run_token", "run_datasets", "run_environment", "previous_run_datasets"]:
                 st.session_state.pop(key, None)
             st.session_state["previous_toy"] = toy_id
+        if pending:
+            st.session_state["report_target"] = pending["path"]
         page = st.radio("工作空间", PAGES, key="navigation", label_visibility="collapsed",
                         format_func=lambda value: "测试集与工具管理" if value == PAGES[1] else value)
         chat_name = None
@@ -674,7 +711,7 @@ def main():
     display_name = chat_name if page == LIVE_CHAT_PAGE else (toy.name or toy.id)
     badge = "实时对话" if page == LIVE_CHAT_PAGE else "文本评测"
     st.markdown(f'<div class="topline"><span>工作空间 <strong> / {escape(display_name)}</strong></span><span class="badge">{badge}</span></div>', unsafe_allow_html=True)
-    groups = safe_groups(toy) if page not in (PAGES[3], LIVE_CHAT_PAGE) else []
+    groups = safe_groups(toy) if page not in (PAGES[3], LIVE_CHAT_PAGE, RELEASE_PAGE) else []
     if page == PAGES[0]:
         dashboard(toy, groups)
     elif page == PAGES[1]:
@@ -688,6 +725,9 @@ def main():
         toy_management_page(toy, base_config)
     elif page == LIVE_CHAT_PAGE:
         live_chat_page(chat_name)
+    elif page == RELEASE_PAGE:
+        from ui_release import release_page
+        release_page(toys, base_config, job_manager(), ROOT / "reports", detail_panel, open_release_report)
     if page == PAGES[2]:
         from toy_profiles import apply_toy_environment
         triggers_management(toys, lambda item: apply_toy_environment(base_config(item), item))
@@ -699,5 +739,6 @@ if __name__ == "__main__":
     router = st.navigation([
         st.Page(main, title="Agent 评测工作台", default=True),
         st.Page(chat_demo, title="玩具实时对话", url_path="chat"),
+        st.Page(release_demo, title="发版自测", url_path="release"),
     ], position="hidden")
     router.run()

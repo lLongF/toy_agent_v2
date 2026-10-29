@@ -63,7 +63,8 @@ def create_toy(name, credential_ref='', capabilities=None, environments=None, *,
     toy_id = validate_id(toy_id or "toy-" + uuid4().hex[:12])
     if toy_id == "_template":
         raise ValueError("保留的玩具 id")
-    data = _fields(name, credential_ref, capabilities, environments, enabled)
+    from toy_profiles import ALL_CAPABILITIES
+    data = _fields(name, credential_ref, dict(ALL_CAPABILITIES) if capabilities is None else capabilities, environments, enabled)
     toys_dir = safe_path(root / "toys", root)
     directory = safe_path(toys_dir / toy_id, toys_dir)
     directory.parent.mkdir(parents=True, exist_ok=True)

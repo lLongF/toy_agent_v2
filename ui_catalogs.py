@@ -62,7 +62,7 @@ def connect_toy_dialog():
         token = st.text_input("玩具 Token", type="password", placeholder="输入用于 OTA 激活的 Token")
         if st.form_submit_button("接入并保存", type="primary"):
             try:
-                created = create_toy(name.strip(), token=token, capabilities={"text": "supported"})
+                created = create_toy(name.strip(), token=token)
                 st.session_state["catalog_notice"] = "已接入 " + (created.name or created.id)
                 st.session_state["toy_connect_open"] = False
                 st.rerun()

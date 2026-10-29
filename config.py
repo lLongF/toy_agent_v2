@@ -396,6 +396,9 @@ class Config:
     judge_credentials: Dict[str, str] = field(default_factory=dict)
     connection_scene: str = "company"
     scene_identity_generated: bool = False
+    # 原入口默认 OTA；发版自测显式选择直连。
+    connection_mode: str = "ota"
+    release_environment: str = ""
 
 # 连接与消息搜集
 @dataclass

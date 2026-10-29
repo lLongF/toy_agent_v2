@@ -1,5 +1,7 @@
 # 玩具 Agent 平台服务器部署与实时对话验收手册
 
+当前工作台、发版自测与实时对话三个入口共用一次部署。部署前先看[统一部署方案](deployment_plan.md)，其中补充 `/release`、裁判环境变量、最新发布文件和自测验收清单；本文保留 Linux 安装和代理配置的详细命令。
+
 > 核对日期：2026-10-29。依据当前源码和部署配置。
 > 主方案：Debian 12（bookworm）+ Python 3.11 + systemd + Nginx + Let's Encrypt。
 > 文中域名统一使用 `demo.example.com`，服务器 IP 使用 `SERVER_IP`，SSH 用户使用 `deploy`；请替换为实际值。
@@ -12,6 +14,7 @@
 | 给老板演示 | `https://demo.example.com/chat` |
 | 直接选择小智 | `https://demo.example.com/chat?toy=小智` |
 | 原评测工作台 | `https://demo.example.com/` |
+| 独立发版自测 | `https://demo.example.com/release` |
 | 本机排查后端 | 服务器自身的 `http://127.0.0.1:8501/_stcore/health` |
 
 ```mermaid

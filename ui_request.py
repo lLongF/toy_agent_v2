@@ -49,7 +49,9 @@ def validate_request(cfg):
             raise ValueError("缺少所选裁判凭据，请配置 API Key 或环境变量引用")
     if not cfg.device_mac.strip() or (needs_judge and any(not endpoint.model.strip() for endpoint in endpoints)):
         raise ValueError("设备 MAC 和启用的裁判模型不能为空")
-    if urlparse(cfg.ota_url).scheme not in {"http", "https"} or not urlparse(cfg.ota_url).hostname:
+    from connection_scenes import validate_connection_mode
+    validate_connection_mode(cfg)
+    if cfg.connection_mode == "ota" and (urlparse(cfg.ota_url).scheme not in {"http", "https"} or not urlparse(cfg.ota_url).hostname):
         raise ValueError("OTA 地址必须为有效的 HTTP(S) URL")
     if cfg.response_collect_timeout <= 0:
         raise ValueError("回复采集超时必须大于 0")

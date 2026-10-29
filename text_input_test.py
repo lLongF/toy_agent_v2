@@ -40,13 +40,15 @@ from execution_lock import exclusive_device
 from safe_output import SafeLog
 from report import ReportWriter
 from testers import ConversationTestDispatcher, build_test_handlers
+from run_progress import update_progress
 
 
 @exclusive_device
 async def run_framework(cfg: Config) -> Dict[str, Any]:
     """按测试类型隔离 WebSocket 会话：同一类型内保留上下文，换类型则重建连接。"""
     cfg = replace(cfg, rules_snapshot=cfg.rules_snapshot or load_rules(cfg), run_id=cfg.run_id or uuid4().hex[:12])
-    from connection_scenes import validate_scene_cases
+    from connection_scenes import validate_scene_cases, validate_connection_mode
+    validate_connection_mode(cfg)
     is_xiaozhi = cfg.connection_scene == "xiaozhi"
     transport_class = TransportClient
     if is_xiaozhi:
@@ -91,6 +93,8 @@ async def run_framework(cfg: Config) -> Dict[str, Any]:
     protocol_info = {
         "schema_version": "2",
         "connection_scene": cfg.connection_scene,
+        "connection_mode": cfg.connection_mode,
+        "release_environment": cfg.release_environment,
         "target_name": "小智 AI" if is_xiaozhi else cfg.toy_snapshot.get("name", cfg.toy_id),
         "client_id": cfg.client_id,
         "ota_url": cfg.ota_url,
@@ -141,6 +145,7 @@ async def run_framework(cfg: Config) -> Dict[str, Any]:
     run_error: Optional[str] = None
     ws_url = cfg.ws_url
     ws_token = cfg.token
+    update_progress(cfg, "连接准备")
     try:
         ota_state = RuntimeState(mcp_tools=list(mcp_tools))
         ota_transport = transport_class(cfg, ota_state, MessageRouter(ota_state))
@@ -149,55 +154,61 @@ async def run_framework(cfg: Config) -> Dict[str, Any]:
             f"玩具: {cfg.toy_id}  Device-Id={cfg.device_mac}",
             flush=True,
         )
-        print(f"请求 OTA: {cfg.ota_url}  Device-Id={cfg.device_mac}", flush=True)
-        ota_result = await ota_transport.send_ota_request()
-        protocol_info["ota_called"] = True
-        protocol_info["ota_http_status"] = ota_result.get("status")
-        protocol_info["ota_error"] = ota_result.get("error")
-        protocol_info["ota_request"] = ota_result.get("request")
-        ota_data = ota_result.get("data") if isinstance(ota_result.get("data"), dict) else {}
-        if is_xiaozhi:
-            activation = ota_data.get("activation") or {}
-            protocol_info["ota_activation"] = {"present": bool(activation),
-                "has_code": bool(activation.get("code")) if isinstance(activation, dict) else False,
-                "has_challenge": bool(activation.get("challenge")) if isinstance(activation, dict) else False}
-            print(f"小智 OTA 激活信息: present={bool(activation)}（仅记录状态，不输出激活码）", flush=True)
-            # MQTT credentials/activation challenges are not used in text evaluation.
-            ota_data = {k: v for k, v in ota_data.items() if k in {"websocket", "server_time"}}
-            if not ota_data.get("websocket") and (ota_result.get("data") or {}).get("activation"):
-                ota_result["error"] = "小智 OTA 尚未提供可用 WS 地址，请检查激活状态"
-        protocol_info["ota_response"] = ota_data
-        ota_ws_url, ota_ws_token = TransportClient.extract_websocket_from_ota(ota_data)
-        if is_xiaozhi and ota_ws_url:
-            from urllib.parse import urlsplit
-            address = urlsplit(ota_ws_url)
-            if address.scheme not in {"ws", "wss"} or not address.hostname or address.username or address.password:
-                ota_ws_url = ""
-                ota_result["error"] = "小智 OTA 返回无效的 WebSocket 地址"
-        protocol_info["ota_error"] = ota_result.get("error")
-        protocol_info["ota_ok"] = bool(ota_result.get("ok") and ota_ws_url)
-        if ota_ws_url:
-            ws_url = ota_ws_url
-            protocol_info["ws_url"] = ws_url
-        if ota_ws_token:
-            ws_token = ota_ws_token
-            writer.sensitive_values.append(ota_ws_token)
-            if isinstance(sys.stdout, SafeLog):
-                sys.stdout.secrets = [*sys.stdout.secrets, ota_ws_token]
-        print(
-            f"OTA 结果: ok={protocol_info['ota_ok']} status={ota_result.get('status')} "
-            f"websocket.url={ws_url or '(empty)'}",
-            flush=True,
-        )
-        if not protocol_info["ota_ok"]:
-            run_error = str(ota_result.get("error") or "ota failed: missing websocket.url")
-            protocol_info["run_aborted"] = run_error
-            dialogue_groups = []
+        if cfg.connection_mode == "direct":
+            protocol_info["ota_skipped"] = True
+            protocol_info["session_policy"] = "直连指定 WebSocket，不请求 OTA；每类用例独立会话。"
+            print("直连 WebSocket：使用本次填写的地址与 Token，跳过 OTA。", flush=True)
         else:
-            cfg.ws_url = ws_url
-            cfg.token = ws_token
+            print(f"请求 OTA: {cfg.ota_url}  Device-Id={cfg.device_mac}", flush=True)
+            ota_result = await ota_transport.send_ota_request()
+            protocol_info["ota_called"] = True
+            protocol_info["ota_http_status"] = ota_result.get("status")
+            protocol_info["ota_error"] = ota_result.get("error")
+            protocol_info["ota_request"] = ota_result.get("request")
+            ota_data = ota_result.get("data") if isinstance(ota_result.get("data"), dict) else {}
+            if is_xiaozhi:
+                activation = ota_data.get("activation") or {}
+                protocol_info["ota_activation"] = {"present": bool(activation),
+                    "has_code": bool(activation.get("code")) if isinstance(activation, dict) else False,
+                    "has_challenge": bool(activation.get("challenge")) if isinstance(activation, dict) else False}
+                print(f"小智 OTA 激活信息: present={bool(activation)}（仅记录状态，不输出激活码）", flush=True)
+                # MQTT credentials/activation challenges are not used in text evaluation.
+                ota_data = {k: v for k, v in ota_data.items() if k in {"websocket", "server_time"}}
+                if not ota_data.get("websocket") and (ota_result.get("data") or {}).get("activation"):
+                    ota_result["error"] = "小智 OTA 尚未提供可用 WS 地址，请检查激活状态"
+            protocol_info["ota_response"] = ota_data
+            ota_ws_url, ota_ws_token = TransportClient.extract_websocket_from_ota(ota_data)
+            if is_xiaozhi and ota_ws_url:
+                from urllib.parse import urlsplit
+                address = urlsplit(ota_ws_url)
+                if address.scheme not in {"ws", "wss"} or not address.hostname or address.username or address.password:
+                    ota_ws_url = ""
+                    ota_result["error"] = "小智 OTA 返回无效的 WebSocket 地址"
+            protocol_info["ota_error"] = ota_result.get("error")
+            protocol_info["ota_ok"] = bool(ota_result.get("ok") and ota_ws_url)
+            if ota_ws_url:
+                ws_url = ota_ws_url
+                protocol_info["ws_url"] = ws_url
+            if ota_ws_token:
+                ws_token = ota_ws_token
+                writer.sensitive_values.append(ota_ws_token)
+                if isinstance(sys.stdout, SafeLog):
+                    sys.stdout.secrets = [*sys.stdout.secrets, ota_ws_token]
+            print(
+                f"OTA 结果: ok={protocol_info['ota_ok']} status={ota_result.get('status')} "
+                f"websocket.url={ws_url or '(empty)'}",
+                flush=True,
+            )
+            if not protocol_info["ota_ok"]:
+                run_error = str(ota_result.get("error") or "ota failed: missing websocket.url")
+                protocol_info["run_aborted"] = run_error
+                dialogue_groups = []
+            else:
+                cfg.ws_url = ws_url
+                cfg.token = ws_token
 
         total_groups = len(dialogue_groups)
+        update_progress(cfg, "采集会话", 0, total_groups)
         for group_index, group in enumerate(dialogue_groups, start=1):
             print(
                 f"\n[{group_index}/{total_groups}] 开始类型会话：{group.category}，"
@@ -283,6 +294,7 @@ async def run_framework(cfg: Config) -> Dict[str, Any]:
                 "returned_tool_names": returned_tool_names,
             }
             results.append(group_result)
+            update_progress(cfg, "采集会话", group_index, total_groups)
             turn_count = len(group_result.get("turn_results") or [])
             print(
                 f"[{group_index}/{total_groups}] 采集完成："
@@ -304,6 +316,7 @@ async def run_framework(cfg: Config) -> Dict[str, Any]:
     execution_failed = bool(run_error or len(results) != protocol_info["dialogue_group_count"]
                             or any(g.get("status") != "completed" or any(t.get("execution_error") for t in g.get("turn_results", [])) for g in results))
     protocol_info["execution_status"] = "failed" if execution_failed else "completed"
+    update_progress(cfg, "生成报告")
     report_paths = writer.write(
         results, protocol_info, cases_xlsx=source_cases, export_xlsx=cfg.export_xlsx
     )
