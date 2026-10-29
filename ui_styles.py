@@ -14,6 +14,13 @@ def apply_styles():
     [data-testid="stSidebar"] [data-testid="stRadio"] label:has(input:checked) {background:#293253;box-shadow:inset 3px 0 #a5adff;}
     [data-testid="stSidebar"] [data-testid="stRadio"] label:hover {background:#232c41;}
     [data-testid="stSidebar"] [data-testid="stRadio"] label > div:first-child {display:none;}
+    [data-testid="stSidebar"] .st-key-live-chat-submenu {margin-left:18px;padding-left:12px;border-left:1px solid #34405a;}
+    [data-testid="stSidebar"] .st-key-live-chat-submenu [data-testid="stRadio"] label {padding:8px 12px;margin:2px 0;}
+    /* The remote chat locks body scrolling, so fit its frame to the available viewport. */
+    [data-testid="stMainBlockContainer"]:has(.st-key-live-chat-frame) {height:100dvh;padding-bottom:1rem;}
+    [data-testid="stMainBlockContainer"]:has(.st-key-live-chat-frame) > [data-testid="stVerticalBlock"] {height:100%;min-height:0;}
+    .st-key-live-chat-frame {min-height:0!important;}
+    .st-key-live-chat-frame iframe {display:block;}
     [data-testid="stVerticalBlockBorderWrapper"] > div {box-shadow:0 3px 12px #172b4d03;}
     [data-testid="stMetric"] {background:#fff;border:1px solid #e8ebf2;border-radius:14px;padding:18px 20px;min-height:115px;}
     [data-testid="stMetricLabel"] {color:#738096;font-size:12px;letter-spacing:.015em;}

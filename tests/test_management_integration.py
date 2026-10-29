@@ -138,6 +138,31 @@ class ManagementIntegrationTests(unittest.TestCase):
         self.assertIsNone(report["metrics"]["pass_rate"])
         self.assertEqual(report["metrics"]["failed_count"], 0)
 
+    def test_dataset_sidecar_threshold_drives_run_rows_and_legacy_fallback(self):
+        from dataset_thresholds import save_dataset_thresholds, snapshot_threshold, thresholds_path
+        from toy_management import file_hash
+        base = self.root / "data" / "base.xlsx"
+        book = openpyxl.Workbook()
+        book.active.title = "Test case"
+        book.active.append(HEADERS)
+        book.active.append(("基础问答", "plain", "你好", "回复问候", "否", "", ""))
+        book.save(base)
+        book.close()
+        dataset = create_dataset("阈值集", source_path=base, dataset_id="thresholds", root=self.root)
+        # Sidecar is authoritative: 0.5 must beat the 0.7 category default.
+        save_dataset_thresholds(dataset, {"case_thresholds": [
+            {"dataset_id": dataset.id, "category": "基础问答", "case_id": "plain",
+             "sheet_row": 2, "threshold": .5, "expect_tool_call": False}]},
+            file_hash(thresholds_path(dataset, self.root)), root=self.root)
+        cfg = prepare_dataset_snapshot(replace(self.cfg, selected_dataset_ids=[dataset.id]), self.root / "run")
+        self.assertEqual(snapshot_threshold(cfg.dataset_snapshot, "基础问答", "plain", 2, root=self.root, cfg=cfg), .5)
+        # Without a sidecar the page keeps the legacy category threshold.
+        plain = self.datasets()[0]
+        fallback = prepare_dataset_snapshot(replace(self.cfg, selected_dataset_ids=[plain.id]), self.root / "run2")
+        self.assertIsNone(snapshot_threshold(fallback.dataset_snapshot, "MCP调用", "same-id", 2, root=self.root, cfg=fallback))
+        # Missing source mapping stays None instead of guessing.
+        self.assertIsNone(snapshot_threshold({}, "基础问答", "plain", 2, root=self.root))
+
     def test_scoped_rules_reject_ambiguous_and_project_dataset_original_rows(self):
         from evaluation_selection import scoped_rules
         datasets = self.datasets()

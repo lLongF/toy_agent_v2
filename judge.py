@@ -7,6 +7,7 @@ import os
 import re
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field, replace
+from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 
 from config import Config, combined_text_for_mcp_no_tool_llm_judge, turn_requires_mcp
@@ -630,6 +631,13 @@ def post_judge_results(results: List[Dict[str, Any]], cfg: Config) -> Dict[str, 
 
         def judge_for_turn(turn):
             threshold = case_threshold(rules, cfg.toy_id, category, turn.get("case_id", ""), turn.get("sheet_row"))
+            # Dataset sidecar is authoritative when the run has a frozen source mapping;
+            # the editor page resolves thresholds through the same helper.
+            from dataset_thresholds import snapshot_threshold
+            sidecar = snapshot_threshold(cfg.dataset_snapshot, category, turn.get("case_id", ""),
+                                         turn.get("sheet_row"), root=Path(__file__).resolve().parent, cfg=cfg)
+            if sidecar is not None:
+                threshold = sidecar
             if threshold not in per_threshold:
                 per_threshold[threshold] = DualLLMJudge(replace(group_cfg, judge_pass_threshold=threshold))
                 per_threshold[threshold]._get_client()

@@ -1,0 +1,25 @@
+[Unit]
+Description=Toy Agent Streamlit workspace and live chat
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+User=toyagent
+Group=toyagent
+WorkingDirectory=/srv/toy-agent/app
+EnvironmentFile=/etc/toy-agent.env
+Environment=PYTHONUTF8=1
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/srv/toy-agent/app/.venv/bin/python -m streamlit run streamlit_app.py --server.address 127.0.0.1 --server.port 8501 --server.headless true --server.fileWatcherType none
+Restart=on-failure
+RestartSec=3
+TimeoutStopSec=20
+KillMode=control-group
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target

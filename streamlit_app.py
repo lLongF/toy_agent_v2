@@ -1,4 +1,4 @@
-"""Agent 评测工作台：原生 Streamlit 四页面，复用现有执行引擎。"""
+"""Agent 评测工作台与玩具实时对话，复用现有执行引擎。"""
 from __future__ import annotations
 
 import hashlib
@@ -27,7 +27,15 @@ from ui_styles import apply_styles, empty_state, metric_cards, page_header
 from ui_management import cases_management, tools_management, rules_management, triggers_management
 from asset_store import case_issues
 
-PAGES = ["评测总览", "用例与工具管理", "评测配置与执行", "结果分析", "玩具管理"]
+LIVE_CHAT_PAGE = "玩具实时对话"
+PAGES = ["评测总览", "用例与工具管理", "评测配置与执行", "结果分析", "玩具管理", LIVE_CHAT_PAGE]
+LIVE_CHAT_URLS = {
+    "曦仔": "https://lycheeai-muxi-test.pages.dev/?mac=02:00:00:00:00:0b&productName=%E6%9B%A6%E4%BB%94",
+    "粤悦": "https://lycheeai-muxi-test.pages.dev/?mac=02:00:00:00:00:0c&productName=%E5%B9%BF%E7%94%B5-%E7%B2%A4%E6%82%A6",
+    "仪宝": "https://lycheeai-muxi-test.pages.dev/?mac=02:00:00:00:00:0f&productName=%E4%BB%AA%E7%94%B5-%E4%BB%AA%E5%AE%9D",
+    "闹闹": "https://lycheeai-muxi-test.pages.dev/?mac=02:00:00:00:00:13&productName=%E8%8F%B2%E8%8F%B2%E7%89%B9-%E9%97%B9%E9%97%B9",
+    "小智": "local:xiaozhi",
+}
 COLORS = {"通过": "#5b6dea", "不通过": "#ec7c74", "评分失败": "#efbd65", "未执行": "#b9c3d5"}
 st.set_page_config(page_title="Agent 评测工作台", page_icon=":material/experiment:", layout="wide")
 
@@ -67,6 +75,15 @@ def source_info(path):
         return f"{short_path(path)} · 文件缺失"
     digest = hashlib.sha256(path.read_bytes()).hexdigest()[:12]
     return f"{short_path(path)} · SHA256 {digest}"
+
+
+def page_threshold(cfg, toy, group, turn):
+    """Resolve the threshold shown before a run; dataset sidecar wins over legacy rules."""
+    from dataset_thresholds import snapshot_threshold
+    sidecar = snapshot_threshold(cfg.dataset_snapshot, group.category, turn.case_id, turn.sheet_row, cfg=cfg)
+    if sidecar is not None:
+        return sidecar
+    return case_threshold(cfg.rules_snapshot, toy.id, group.category, turn.case_id, turn.sheet_row)
 
 
 def safe_groups(toy):
@@ -420,6 +437,7 @@ def execution(toy, groups):
             raise ValueError("请至少选择一份测试集")
         with tempfile.TemporaryDirectory(prefix="toy-ui-preview-") as temporary:
             preview = prepare_dataset_snapshot(preview, temporary)
+            st.session_state["preview_dataset_snapshot"] = preview.dataset_snapshot
             groups = selected_groups(preview)
     except (OSError, ValueError) as exc:
         dataset_error = redact_text(str(exc))
@@ -464,6 +482,7 @@ def execution(toy, groups):
             cfg = base_config(toy)
             cfg.selected_judge_ids = chosen_judges
             cfg.selected_dataset_ids = dataset_ids
+            cfg.dataset_snapshot = st.session_state.get("preview_dataset_snapshot", {})
             cfg.environment = environment
             cfg.enable_deepseek_judge = "deepseek" in chosen_judges
             rules_error = None
@@ -480,11 +499,9 @@ def execution(toy, groups):
             if cfg.rules_snapshot:
                 with st.expander("本次每条用例的实际通过基准"):
                     st.dataframe([{"用例": t.case_id, "类型": g.category, "源行号": t.sheet_row,
-                                   "阈值": case_threshold(cfg.rules_snapshot, toy.id, g.category, t.case_id, t.sheet_row),
+                                   "阈值": page_threshold(cfg, toy, g, t),
                                    "方式": "MCP规则" if t.expect_tool_call and cfg.rules_snapshot.get("category_bases", {}).get(g.category, g.category) == "MCP调用" else "语言评分"}
                                   for g in selected for t in g.turns], hide_index=True, width="stretch")
-            if cfg.rules_snapshot:
-                rules_management(cfg, groups)
             with st.expander("凭据（仅本次会话）", expanded=True):
                 from connection_scenes import SCENE_LABELS
                 scene = st.radio("接入场景", list(SCENE_LABELS), format_func=SCENE_LABELS.get,
@@ -590,6 +607,41 @@ def result_page(toy):
     show_report(reports[chosen])
 
 
+@st.cache_resource
+def xiaozhi_chat_bridge():
+    from xiaozhi_chat import ChatBridge
+    return ChatBridge()
+
+
+def live_chat_page(name):
+    url = LIVE_CHAT_URLS[name]
+    page_header(f"{name} · 实时对话", "唤醒玩具后，即可在下方进行文本或语音对话。" if url else "该玩具的对话入口待配置。", "Toy chat")
+    if not url:
+        empty_state(f"{name}对话暂未接入", "提供该玩具的对话链接后，即可在这里直接使用。", "◌")
+        return
+    with st.container(key="live-chat-frame", height="stretch"):
+        source = xiaozhi_chat_bridge().html() if name == "小智" else url
+        st.iframe(source, height="stretch", alt=f"{name}实时对话")
+
+
+def chat_demo():
+    """Independent presentation route; reuse the exact same chat renderers/bridge."""
+    st.set_page_config(page_title="玩具实时对话", initial_sidebar_state="collapsed")
+    apply_styles()
+    st.markdown("""<style>
+        [data-testid="stSidebar"], [data-testid="stSidebarCollapsedControl"],
+        [data-testid="stHeader"] {display:none;}
+        [data-testid="stMainBlockContainer"] {max-width:1440px;}
+        </style>""", unsafe_allow_html=True)
+    st.markdown('<div class="topline"><strong>玩具实时对话</strong><span class="badge">互动体验</span></div>', unsafe_allow_html=True)
+    names = list(LIVE_CHAT_URLS)
+    requested = st.query_params.get("toy", names[0])
+    name = st.radio("选择玩具", names, index=names.index(requested) if requested in names else 0,
+                    horizontal=True, key="demo_chat_toy", label_visibility="collapsed")
+    st.query_params["toy"] = name
+    live_chat_page(name)
+
+
 def main():
     apply_styles()
     toys = list_toy_profiles()
@@ -607,6 +659,10 @@ def main():
             st.session_state["previous_toy"] = toy_id
         page = st.radio("工作空间", PAGES, key="navigation", label_visibility="collapsed",
                         format_func=lambda value: "测试集与工具管理" if value == PAGES[1] else value)
+        chat_name = None
+        if page == LIVE_CHAT_PAGE:
+            with st.container(key="live-chat-submenu"):
+                chat_name = st.radio("实时对话玩具", list(LIVE_CHAT_URLS), key="live_chat_toy", label_visibility="collapsed")
         toy = next(t for t in toys if t.id == toy_id)
         healthy = toy.cases_xlsx.is_file() and (toy.tools_source.get("type") == "mcp_http" or toy.mcp_tools_file.is_file())
         st.caption(("● 远程来源已配置（待连接）" if toy.tools_source.get("type") == "mcp_http" else "● 数据源可读取") if healthy else "○ 数据源需要检查")
@@ -615,8 +671,10 @@ def main():
             for name in ["streamlit", "websockets", "openai", "pandas", "plotly"]:
                 st.caption(f"{name}  {importlib.metadata.version(name)}")
         st.markdown('<div class="side-foot">Agent 评测工作台<br>本地文件 · 真实运行 · 可追溯结果</div>', unsafe_allow_html=True)
-    st.markdown(f'<div class="topline"><span>工作空间 <strong> / {escape(toy.name or toy.id)}</strong></span><span class="badge">文本评测</span></div>', unsafe_allow_html=True)
-    groups = safe_groups(toy) if page != PAGES[3] else []
+    display_name = chat_name if page == LIVE_CHAT_PAGE else (toy.name or toy.id)
+    badge = "实时对话" if page == LIVE_CHAT_PAGE else "文本评测"
+    st.markdown(f'<div class="topline"><span>工作空间 <strong> / {escape(display_name)}</strong></span><span class="badge">{badge}</span></div>', unsafe_allow_html=True)
+    groups = safe_groups(toy) if page not in (PAGES[3], LIVE_CHAT_PAGE) else []
     if page == PAGES[0]:
         dashboard(toy, groups)
     elif page == PAGES[1]:
@@ -625,9 +683,11 @@ def main():
         execution(toy, groups)
     elif page == PAGES[3]:
         result_page(toy)
-    else:
+    elif page == PAGES[4]:
         from ui_catalogs import toy_management_page
         toy_management_page(toy, base_config)
+    elif page == LIVE_CHAT_PAGE:
+        live_chat_page(chat_name)
     if page == PAGES[2]:
         from toy_profiles import apply_toy_environment
         triggers_management(toys, lambda item: apply_toy_environment(base_config(item), item))
@@ -636,4 +696,8 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    router = st.navigation([
+        st.Page(main, title="Agent 评测工作台", default=True),
+        st.Page(chat_demo, title="玩具实时对话", url_path="chat"),
+    ], position="hidden")
+    router.run()

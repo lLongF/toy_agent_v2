@@ -4,9 +4,13 @@ import json
 from dataclasses import replace
 
 import streamlit as st
+import pandas as pd
 
 from asset_store import digest
 from dataset_store import create_dataset, list_datasets, load_registry, registry_hash, save_registry
+from config import load_dialogue_groups_from_xlsx
+from dataset_thresholds import load_dataset_thresholds, save_dataset_thresholds, thresholds_path
+from toy_management import file_hash
 from safe_output import redact_text
 from toy_management import create_toy, update_toy, file_hash
 from toy_profiles import apply_toy_environment
@@ -208,6 +212,49 @@ def _toy_detail_editor(toy, cfg_factory):
             st.error(redact_text(str(exc)))
 
 
+def _dataset_threshold_editor(dataset, toy, busy=False):
+    """Edit per-case thresholds through the sidecar API; MCP rows are immutable 1.0."""
+    root = toy.root.parent.parent
+    try:
+        groups = load_dialogue_groups_from_xlsx(dataset.path)
+        current = load_dataset_thresholds(dataset, root=root)
+    except (OSError, ValueError) as exc:
+        st.error(redact_text(str(exc)))
+        return
+    existing = {(str(item.get("category")), str(item.get("case_id")), item.get("sheet_row")): item
+                for item in current.get("case_thresholds", [])}
+    rows = []
+    for group in groups:
+        for turn in group.turns:
+            key = (group.category, str(turn.case_id), turn.sheet_row)
+            item = existing.get(key) or existing.get((group.category, str(turn.case_id), None), {})
+            mcp = bool(turn.expect_tool_call)
+            rows.append({"类型": group.category, "用例编号": str(turn.case_id), "行号": int(turn.sheet_row),
+                         "嵌入式MCP": mcp, "通过阈值": 1.0 if mcp else float(item.get("threshold", 0.7))})
+    st.caption("已选测试集的全部用例；普通用例默认阈值 0.7，范围 0–1。强制嵌入式 MCP 固定为 1 且不可编辑。")
+    frame = pd.DataFrame(rows, columns=["类型", "用例编号", "行号", "嵌入式MCP", "通过阈值"])
+    editor = st.data_editor(frame, hide_index=True, width="stretch", key="dataset-threshold-" + dataset.id,
+                            disabled=["类型", "用例编号", "行号", "嵌入式MCP"],
+                            column_config={"通过阈值": st.column_config.NumberColumn(min_value=0.0, max_value=1.0, step=0.01)})
+    if st.button("保存测试集用例阈值", key="save-dataset-threshold-" + dataset.id, disabled=busy):
+        try:
+            values = []
+            for row in editor.to_dict("records"):
+                value = 1.0 if bool(row.get("嵌入式MCP")) else row.get("通过阈值")
+                if isinstance(value, bool) or value is None or not 0 <= float(value) <= 1:
+                    raise ValueError("评分阈值必须为 0–1 的数值")
+                values.append({"dataset_id": dataset.id, "category": str(row["类型"]),
+                               "case_id": str(row["用例编号"]), "sheet_row": int(row["行号"]),
+                               "threshold": 1.0 if bool(row.get("嵌入式MCP")) else float(value),
+                               "expect_tool_call": bool(row.get("嵌入式MCP"))})
+            sidecar = thresholds_path(dataset, root)
+            save_dataset_thresholds(dataset, {"case_thresholds": values}, file_hash(sidecar), root=root)
+            st.session_state["dataset_thresholds"] = {dataset.id: load_dataset_thresholds(dataset, root=root)}
+            st.success("测试集阈值已保存；公共测试集的所有引用者将使用同一份配置。")
+        except (OSError, ValueError, TypeError) as exc:
+            st.error(redact_text(str(exc)))
+
+
 def dataset_management(toy, busy=False):
     st.subheader("公共与专属测试集")
     entries = list_datasets(toy)
@@ -242,5 +289,11 @@ def dataset_management(toy, busy=False):
     st.caption("公共测试集修改会影响复用它的玩具下一轮评测；本次运行使用独立快照。复制出的测试集是独立副本。")
     if entries:
         chosen = st.selectbox("维护测试集", entries, format_func=lambda d: d.name + (" · 公共" if d.scope == "public" else " · 专属"))
+        _dataset_threshold_editor(chosen, toy, busy=busy)
+        # Execution reads this selection and sidecar snapshot from session state.
+        try:
+            st.session_state["selected_dataset_thresholds"] = load_dataset_thresholds(chosen, root=toy.root.parent.parent)
+        except (OSError, ValueError):
+            st.session_state.pop("selected_dataset_thresholds", None)
         return replace(toy, cases_xlsx=chosen.path), chosen
     return toy, None

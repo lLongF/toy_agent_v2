@@ -78,7 +78,12 @@ def load_rules(cfg, root=None) -> dict:
             "case_types_sha256": case_types_hash(root), "mcp_rule_threshold": 1}
 
 
-def case_threshold(rules, toy_id, category, case_id, sheet_row=None):
+def case_threshold(rules, toy_id, category, case_id, sheet_row=None, root=None, cfg=None):
+    # Preserve legacy (rules, toy_id, category, case_id, row) callers while
+    # accepting the dataset-scoped API (dataset, category, case_id, row, root, cfg).
+    if not isinstance(rules, dict) or "thresholds" not in rules:
+        from dataset_thresholds import case_threshold as dataset_case_threshold
+        return dataset_case_threshold(rules, toy_id, category, case_id, root=root, cfg=cfg)
     threshold = rules["thresholds"].get(category, rules["default_threshold"])
     matches = [r for r in rules.get("case_thresholds", []) if r["toy_id"] == toy_id and r["category"] == category
                and r["case_id"] == str(case_id) and ("sheet_row" not in r or r["sheet_row"] == sheet_row)]

@@ -1,0 +1,31 @@
+{
+  "version": 1,
+  "dataset_id": "dataset-0deebe1e3d27",
+  "dataset_sha256": "59436f5bad2ccc42870e37ccb489d0b7f3024374e31f121c082902057d93f700",
+  "case_thresholds": [
+    {
+      "dataset_id": "dataset-0deebe1e3d27",
+      "category": "基础问答",
+      "case_id": "1",
+      "threshold": 0.8,
+      "expect_tool_call": false,
+      "sheet_row": 2
+    },
+    {
+      "dataset_id": "dataset-0deebe1e3d27",
+      "category": "基础问答",
+      "case_id": "2",
+      "threshold": 0.7,
+      "expect_tool_call": false,
+      "sheet_row": 3
+    },
+    {
+      "dataset_id": "dataset-0deebe1e3d27",
+      "category": "MCP调用",
+      "case_id": "3",
+      "threshold": 1.0,
+      "expect_tool_call": true,
+      "sheet_row": 4
+    }
+  ]
+}

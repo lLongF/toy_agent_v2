@@ -13,6 +13,7 @@ import openpyxl
 from config import _dialogue_worksheet, load_dialogue_groups_from_xlsx
 from toy_profiles import PROJECT_ROOT, load_toy_profile, safe_path, validate_id
 from toy_management import atomic_json, file_hash
+from dataset_thresholds import ensure_dataset_thresholds
 
 HEADERS = ("类型", "用例编号", "消息列表", "预期结果", "是否工具调用", "工具名称", "工具参数文字描述")
 
@@ -232,6 +233,8 @@ def prepare_dataset_snapshot(cfg, tempdir, root=None):
                     raise ValueError("制作快照时测试集已变化，请重试")
             if before != file_hash(dataset.path):
                 raise ValueError("制作快照时测试集已变化，请重试")
+            # Threshold sidecars are resolved per source dataset; defaults stay in memory.
+            ensure_dataset_thresholds(dataset, root, cfg)
         if len(datasets) > 1:
             merged.save(target)
         load_dialogue_groups_from_xlsx(target)

@@ -125,6 +125,7 @@ class ReportWriter:
             "rule_score": turn_result.get("rule_score"),
             "evaluation_mode": turn_result.get("evaluation_mode", "llm" if judge_result else "embedded_rule"),
             "execution_error": turn_result.get("execution_error", ""),
+            "threshold": (judge_result.get("threshold") if isinstance(judge_result, dict) else None),
             "expected_tool": turn_result.get("tool_name", ""),
             "judge_details": {str(j.get("judge_name")): j for j in judge_result.get("judges", []) if j.get("judge_name")}, 
             "result_label": "未执行" if turn_result.get("execution_error") else ("评分失败" if judge_status == "评分失败" else ("通过" if bool(turn_result.get("pass", False)) else "不通过")),
@@ -275,7 +276,7 @@ class ReportWriter:
             "DeepSeek评分",
             "DeepSeek原因",
             "综合评分",
-            "判定方式", "规则得分", "预期嵌入式工具", "执行异常", "测试集", "源工作表", "源行号",
+            "判定方式", "通过基准", "规则得分", "预期嵌入式工具", "执行异常", "测试集", "源工作表", "源行号",
         ]
         scene_column = next((c.column for c in ws[1] if c.value == "接入场景"), ws.max_column + 1)
         ws.cell(row=1, column=scene_column, value="接入场景")
@@ -298,14 +299,14 @@ class ReportWriter:
             ws.cell(row=r, column=base_col + 6, value=exp.get("deepseek_reason", ""))
             ws.cell(row=r, column=base_col + 7, value=exp.get("combined_score", ""))
             origin = (dataset_snapshot or {}).get("rows", {}).get(str(r), {})
-            extras = [exp.get("evaluation_mode", ""), exp.get("rule_score"), exp.get("expected_tool", ""),
+            extras = [exp.get("evaluation_mode", ""), exp.get("threshold"), exp.get("rule_score"), exp.get("expected_tool", ""),
                       exp.get("execution_error", ""), origin.get("dataset_name", ""), origin.get("sheet", ""), origin.get("row")]
             for offset, value in enumerate(extras, 8):
                 ws.cell(row=r, column=base_col + offset, value=value)
             for index, identity in enumerate(dynamic_judges):
                 detail = exp.get("judge_details", {}).get(identity, {})
-                ws.cell(row=r, column=base_col + 15 + index * 2, value=detail.get("score"))
-                ws.cell(row=r, column=base_col + 16 + index * 2, value=detail.get("reason", ""))
+                ws.cell(row=r, column=base_col + 16 + index * 2, value=detail.get("score"))
+                ws.cell(row=r, column=base_col + 17 + index * 2, value=detail.get("reason", ""))
         ensure_dir(out_path.parent)
         for row in ws.iter_rows(min_row=2, min_col=base_col, max_col=base_col + len(extra_headers) - 1):
             for cell in row:

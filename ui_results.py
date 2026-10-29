@@ -64,6 +64,15 @@ def normalise_report(data: dict) -> dict:
                 status = "未执行"
             score = number(judge.get("score")) if judge.get("judge_available") else None
             threshold = number(judge.get("threshold"))
+            source_snapshot = (protocol.get("dataset_snapshot") or {}).get("rows", {}).get(str(sheet_row), {})
+            if (turn or {}).get("mcp_required") or (turn or {}).get("mcp_pass") is not None and threshold == 1:
+                threshold_source = "嵌入式 MCP 固定阈值 1"
+            elif source_snapshot.get("dataset_id"):
+                threshold_source = f'测试集 sidecar：{source_snapshot.get("dataset_name", source_snapshot["dataset_id"])}'
+            elif threshold is not None:
+                threshold_source = "报告评分快照"
+            else:
+                threshold_source = "无阈值记录"
             messages = original.get("user_messages") or [u.get("user_message", "") for u in (turn or {}).get("utterances", [])]
             messages = [str(m) for m in messages] if isinstance(messages, list) else [str(messages)]
             reason = (turn or {}).get("execution_error") or judge.get("reason") or fields.get("qwen_reason") or group.get("reason", "")
@@ -74,7 +83,7 @@ def normalise_report(data: dict) -> dict:
             rows.append({
                 "row": sheet_row, "case_id": str((turn or {}).get("case_id") or original.get("case_id") or sheet_row),
                 "category": group.get("category") or spec.get("category") or "未记录类型", "status": status,
-                "score": score, "threshold": threshold, "messages": messages,
+                "score": score, "threshold": threshold, "threshold_source": threshold_source, "messages": messages,
                 "expected": (turn or {}).get("expected_outcome") or original.get("expected_outcome") or "",
                 "actual": fields.get("actual", ""), "reason": reason,
                 "judges": judge.get("judges") or ([judge] if judge else []),
