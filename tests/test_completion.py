@@ -18,7 +18,6 @@ from unittest.mock import patch
 from zoneinfo import ZoneInfo
 
 import openpyxl
-import pandas as pd
 
 from asset_store import digest, editable_cases, restore_cases, save_cases, case_issues
 from config import load_dialogue_groups_from_xlsx
@@ -500,11 +499,10 @@ class CompletionUITests(unittest.TestCase):
                 self.assertEqual(app.metric[1].value, "1")
             self.assertFalse(app.exception)
 
-    def test_ui_management_saves_cases_source_and_case_thresholds(self):
+    def test_ui_management_saves_cases_and_tool_source(self):
         from streamlit.testing.v1 import AppTest
         from ui_jobs import ROOT
         import streamlit
-        from config import Config
         cfg = config()
         original_hash = digest(cfg.cases_xlsx)
         with tempfile.TemporaryDirectory(dir=ROOT, prefix=".test-ui-") as tmp:
@@ -515,12 +513,6 @@ class CompletionUITests(unittest.TestCase):
             shutil.copy2(cfg.cases_xlsx, path)
             profile = toy_root / "toy.json"
             profile.write_text(json.dumps({"token": "", "cases_xlsx": str(path), "mcp_tools_file": str(cfg.mcp_tools_file)}))
-            threshold_path = root / "thresholds.json"
-            threshold_path.write_text('{"thresholds": {}, "case_thresholds": []}')
-
-            def factory(**kwargs):
-                return replace(Config(**kwargs), thresholds_file=threshold_path)
-
             native_editor = streamlit.data_editor
             def edit_cases(frame, **kwargs):
                 if "源行号" in frame.columns:
@@ -529,17 +521,7 @@ class CompletionUITests(unittest.TestCase):
                     return frame
                 return native_editor(frame, **kwargs)
 
-            def edit_thresholds(frame, **kwargs):
-                if "启用分类覆盖" in frame.columns:
-                    frame = frame.copy()
-                    frame.loc[frame["类型"] == "基础问答", "启用分类覆盖"] = True
-                    frame.loc[frame["类型"] == "基础问答", "通过阈值"] = 0.8
-                    return frame
-                if "toy_id" in frame.columns:
-                    return pd.DataFrame([{"toy_id": "default", "category": "基础问答", "case_id": "1", "sheet_row": 2, "threshold": 0.95}])
-                return native_editor(frame, **kwargs)
-
-            with patch("toy_profiles.TOYS_DIR", root), patch("config.Config", side_effect=factory):
+            with patch("toy_profiles.TOYS_DIR", root):
                 app = AppTest.from_file(str(ROOT / "streamlit_app.py")).run(timeout=60)
                 app.sidebar.radio[0].set_value("用例与工具管理").run()
                 with patch("streamlit.data_editor", side_effect=edit_cases):
@@ -551,13 +533,6 @@ class CompletionUITests(unittest.TestCase):
                 next(b for b in app.button if b.label == "保存工具来源").click().run()
                 self.assertFalse(app.exception)
                 self.assertEqual(json.loads(profile.read_text())["tools_source"]["type"], "mcp_http")
-                app.sidebar.radio[0].set_value("评测配置与执行").run()
-                with patch("streamlit.data_editor", side_effect=edit_thresholds):
-                    next(b for b in app.button if b.label == "保存分类与单条阈值").click().run()
-                self.assertFalse(app.exception)
-                saved = json.loads(threshold_path.read_text())
-                self.assertEqual(saved["thresholds"]["基础问答"], 0.8)
-                self.assertEqual(saved["case_thresholds"][0]["threshold"], 0.95)
                 self.assertTrue(list((toy_root / ".backups").iterdir()))
         self.assertEqual(digest(cfg.cases_xlsx), original_hash)
 

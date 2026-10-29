@@ -178,6 +178,118 @@ class ManagementIntegrationTests(unittest.TestCase):
         self.assertEqual(projected["threshold"], .81)
         self.assertEqual(cfg.dataset_snapshot["rows"]["3"]["row"], 2)
 
+    def test_dataset_threshold_ui_save_reload_and_evaluation_use_saved_values(self):
+        from streamlit.testing.v1 import AppTest
+        import streamlit
+        from dataset_thresholds import load_dataset_thresholds, thresholds_path
+        from evaluation_support import load_rules
+        from judge import LLMJudge
+        from test_integration import FakeSocket
+
+        base = self.root / "data" / "threshold-cases.xlsx"
+        book = openpyxl.Workbook()
+        book.active.title = "Test case"
+        book.active.append(HEADERS)
+        book.active.append(("基础问答", "strict", "你好", "回复问候", "否", "", ""))
+        book.active.append(("基础问答", "lenient", "你好", "回复问候", "否", "", ""))
+        book.active.append(("MCP调用", "tool", "天气如何", "调用天气工具", "是", "weather", ""))
+        book.save(base)
+        book.close()
+        dataset = create_dataset("页面阈值集", source_path=base, dataset_id="ui-thresholds", root=self.root)
+        original_workbook = dataset.path.read_bytes()
+        script = (
+            "from pathlib import Path\n"
+            "from toy_profiles import load_toy_profile\n"
+            "from ui_catalogs import dataset_management\n"
+            f"toy = load_toy_profile('integration', Path({str(self.root / 'toys')!r}))\n"
+            "dataset_management(toy)\n"
+        )
+        native_editor = streamlit.data_editor
+        values = {"strict": .95, "lenient": .8}
+        loaded_frames = []
+
+        def edit_thresholds(frame, **kwargs):
+            if kwargs.get("key") == "dataset-threshold-" + dataset.id:
+                frame = frame.copy()
+                for case_id, threshold in values.items():
+                    frame.loc[frame["用例编号"] == case_id, "通过阈值"] = threshold
+                return frame
+            return native_editor(frame, **kwargs)
+
+        def record_thresholds(frame, **kwargs):
+            if kwargs.get("key") == "dataset-threshold-" + dataset.id:
+                loaded_frames.append(frame.copy())
+            return native_editor(frame, **kwargs)
+
+        # Keep the actual persistence, collection, judges and report writers;
+        # replace only editor input and external OTA/WS/model responses.
+        async def connect(*args, **kwargs):
+            return FakeSocket()
+
+        response = SimpleNamespace(ok=True, status_code=200,
+                                   json=lambda: {"websocket": {"url": "ws://test.invalid"}})
+        answer = SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(
+            content='{"score":0.9,"reason":"模拟评分","is_off_topic":false}'))])
+        cfg = replace(self.cfg, selected_dataset_ids=[dataset.id], selected_categories=["基础问答"],
+                      rules_snapshot=dict(load_rules(self.cfg, root=self.root), thresholds={"基础问答": .99}),
+                      collect_quiet_seconds=.001, hello_drain_per_wait=.001, hello_drain_idle_rounds=1)
+        with patch("collection.requests.post", return_value=response), \
+             patch("collection.websockets.connect", side_effect=connect), \
+             patch.object(LLMJudge, "_create_client", return_value=(object(), None)), \
+             patch.object(LLMJudge, "_chat", return_value=answer), \
+             patch("judge.__file__", str(self.root / "judge.py")):
+            for attempt, expected_passes in enumerate(((False, True), (True, True))):
+                # A new page instance must also read values saved by the first one.
+                app = AppTest.from_string(script, default_timeout=30).run()
+                self.assertFalse(app.exception)
+                next(w for w in app.selectbox if w.label == "维护测试集").select_index(1).run()
+                self.assertFalse(app.exception)
+                if attempt:
+                    with patch("streamlit.data_editor", side_effect=record_thresholds):
+                        app.run()
+                    self.assertFalse(app.exception)
+                    reloaded = loaded_frames[-1].set_index("用例编号")
+                    self.assertEqual(reloaded.loc["strict", "通过阈值"], .95)
+                    self.assertEqual(reloaded.loc["lenient", "通过阈值"], .8)
+                    self.assertEqual(reloaded.loc["tool", "通过阈值"], 1.0)
+                    values["strict"] = .85
+                with patch("streamlit.data_editor", side_effect=edit_thresholds):
+                    next(w for w in app.button if w.label == "保存测试集用例阈值").click().run()
+                self.assertFalse(app.exception)
+                self.assertFalse(app.error)
+                self.assertTrue(any("测试集阈值已保存" in w.value for w in app.success))
+                saved = load_dataset_thresholds(dataset, root=self.root)
+                self.assertTrue(thresholds_path(dataset, self.root).is_file())
+                self.assertEqual(saved["dataset_id"], dataset.id)
+                self.assertEqual({row["case_id"]: row["threshold"] for row in saved["case_thresholds"]},
+                                 dict(values, tool=1.0))
+                self.assertEqual({row["case_id"]: row["sheet_row"] for row in saved["case_thresholds"]},
+                                 {"strict": 2, "lenient": 3, "tool": 4})
+                run_cfg = prepare_dataset_snapshot(
+                    replace(cfg, reports_dir=self.root / f"reports-{attempt}",
+                            export_xlsx=self.root / f"output-{attempt}.xlsx"), self.root / f"run-{attempt}")
+                output = asyncio.run(run_framework(run_cfg))
+                self.assertEqual(output["execution_status"], "completed")
+                report = read_report(Path(output["report_paths"]["detail_report"]), self.root)
+                rows = {row["case_id"]: row for row in report["rows"]}
+                self.assertEqual(set(rows), {"strict", "lenient"})
+                for case_id, passed in zip(("strict", "lenient"), expected_passes):
+                    self.assertEqual(rows[case_id]["threshold"], values[case_id])
+                    self.assertEqual(rows[case_id]["score"], .9)
+                    self.assertEqual(rows[case_id]["status"], "通过" if passed else "不通过")
+                    self.assertEqual(rows[case_id]["source"]["dataset_id"], dataset.id)
+                self.assertEqual(report["metrics"]["passed_count"], sum(expected_passes))
+                exported = openpyxl.load_workbook(run_cfg.export_xlsx)
+                try:
+                    headers = {c.value: c.column for c in exported.active[1]}
+                    for row, passed in zip((2, 3), expected_passes):
+                        self.assertEqual(exported.active.cell(row, headers["测试结果是否通过"]).value,
+                                         "通过" if passed else "不通过")
+                finally:
+                    exported.close()
+        self.assertEqual(dataset.path.read_bytes(), original_workbook)
+        self.assertTrue(list(thresholds_path(dataset, self.root).parent.joinpath(".backups").glob("*_ui-thresholds.thresholds.json")))
+
     def test_apptest_real_toy_and_dataset_saves_in_temporary_project(self):
         from streamlit.testing.v1 import AppTest
         import toy_profiles
