@@ -25,13 +25,33 @@ class LiveChatUITests(unittest.TestCase):
             self.assertFalse(app.exception)
             self.assertFalse(app.sidebar.radio)
             self.assertFalse(app.sidebar.selectbox)
-            self.assertEqual(app.radio(key="demo_chat_toy").value, "小智")
+            self.assertEqual(app.session_state["demo_chat_toy"], "小智")
+            self.assertFalse(app.radio)
+            self.assertEqual([button.label for button in app.button], [*CHAT_URLS, "小智"])
+            markup = "\n".join(item.value for item in app.markdown)
+            self.assertIn("公司产品", markup)
+            self.assertIn("外部接入", markup)
             self.assertEqual(app.get("iframe")[0].proto.alt, "小智实时对话")
             for name, url in CHAT_URLS.items():
-                app.radio(key="demo_chat_toy").set_value(name).run()
+                app.button(key=f"demo_chat_select_{name}").click().run()
                 self.assertFalse(app.exception)
+                self.assertEqual(len(app.get("iframe")), 1)
                 self.assertEqual(app.get("iframe")[0].proto.src, url)
                 self.assertIn(name, app.query_params["toy"])
+            app.run()
+            self.assertEqual(app.session_state["demo_chat_toy"], "闹闹")
+            app.button(key="demo_chat_select_小智").click().run()
+            self.assertEqual(app.get("iframe")[0].proto.alt, "小智实时对话")
+
+    def test_demo_invalid_toy_falls_back_and_does_not_change_workbench(self):
+        app = AppTest.from_string("from streamlit_app import chat_demo\nchat_demo()", default_timeout=30)
+        app.query_params["toy"] = "不存在的玩具"
+        app.session_state["toy_choice"] = "evaluation-profile"
+        app.run()
+        self.assertFalse(app.exception)
+        self.assertEqual(app.get("iframe")[0].proto.src, CHAT_URLS["曦仔"])
+        self.assertEqual(app.session_state["toy_choice"], "evaluation-profile")
+        self.assertIn("曦仔", app.query_params["toy"])
 
     def test_submenus_switch_to_distinct_device_and_product(self):
         with patch("ui_jobs.JobManager.start", side_effect=AssertionError("对话菜单不能启动评测")), \

@@ -50,6 +50,83 @@ def apply_styles():
     </style>""", unsafe_allow_html=True)
 
 
+def apply_chat_demo_styles():
+    """只由 /chat 注入；不改变工作台、发版自测或嵌入网页的行为。"""
+    st.markdown("""<style>
+    [data-testid="stSidebar"], [data-testid="stSidebarCollapsedControl"],
+    [data-testid="stHeader"] {display:none;}
+    .stApp {background:radial-gradient(ellipse at 15% 0%,#eceeff 0,transparent 65%),#f7f8ff;}
+    [data-testid="stMainBlockContainer"]:has(.st-key-chat-demo-layout) {
+        max-width:1920px;height:100dvh;padding:18px 24px 20px;
+    }
+    [data-testid="stMainBlockContainer"] > [data-testid="stVerticalBlock"] {height:100%;gap:16px;}
+    .chat-demo-topbar {display:flex;align-items:center;justify-content:space-between;height:48px;}
+    .chat-demo-topbar > div {display:flex;align-items:center;gap:12px;}
+    .chat-demo-topbar strong {font-size:21px;color:#20294a;letter-spacing:.4px;}
+    .chat-demo-mark {display:grid;place-items:center;width:34px;height:34px;border-radius:12px;
+        background:linear-gradient(135deg,#7b82ff,#6269e8);color:#fff;font-size:22px;}
+    .chat-demo-topbar .badge {border-radius:20px;padding:6px 12px;}
+    .st-key-chat-demo-layout {min-height:0!important;overflow:visible!important;}
+    .st-key-chat-demo-layout > [data-testid="stLayoutWrapper"] {height:100%;min-height:0;flex:1;}
+    .st-key-chat-demo-layout [data-testid="stHorizontalBlock"] {height:100%;min-height:0;}
+    .st-key-chat-demo-layout [data-testid="stColumn"] {height:100%;min-width:0;}
+    .st-key-chat-demo-layout [data-testid="stColumn"] > [data-testid="stVerticalBlock"] {height:100%;}
+    .st-key-chat-demo-layout [data-testid="stColumn"] > [data-testid="stVerticalBlock"] > [data-testid="stLayoutWrapper"] {height:100%;min-height:0;}
+    .st-key-chat-demo-navigation,.st-key-chat-demo-conversation {
+        background:#fff;border:1px solid #e9eafb;border-radius:22px;
+        box-shadow:0 8px 32px #6269e809;min-height:0!important;
+    }
+    .st-key-chat-demo-navigation {padding:24px 16px;gap:12px;}
+    .chat-demo-nav-title {font-size:19px;font-weight:700;color:#20294a;margin-bottom:8px;}
+    .chat-demo-group {font-size:12px;font-weight:650;color:#838ba5;letter-spacing:1px;margin:12px 0 2px;}
+    .st-key-chat-demo-company,.st-key-chat-demo-external {gap:10px;}
+    .st-key-chat-demo-navigation [data-testid="stButton"] button {
+        min-height:70px;justify-content:flex-start;gap:14px;padding:12px 18px;
+        background:#f8f9ff;border:1px solid #eeeffa;border-radius:14px;color:#303952;
+        box-shadow:none;transition:background .15s,border-color .15s;
+    }
+    .st-key-chat-demo-navigation [data-testid="stButton"] button p {font-size:16px;font-weight:600;}
+    .st-key-chat-demo-navigation [data-testid="stButton"] button [data-testid="stIconMaterial"] {
+        background:#eceeff;color:#737be1;padding:9px;border-radius:12px;font-size:23px;
+    }
+    .st-key-chat-demo-navigation [data-testid="stButton"] button:hover {background:#f0f1ff;border-color:#b8bcff;}
+    .st-key-chat-demo-navigation [data-testid="stButton"] button[kind="primary"] {
+        background:#eeefff;border:1.5px solid #7278ff;color:#454dc3;
+    }
+    .st-key-chat-demo-external {border-top:1px solid #f0f1fa;padding-top:4px;}
+    .chat-demo-nav-note {font-size:11px;line-height:1.8;color:#9ba2b7;margin-top:18px;}
+    .st-key-chat-demo-conversation {padding:16px;gap:12px;overflow:hidden!important;}
+    .chat-demo-context {display:flex;align-items:center;gap:12px;padding:2px 8px 10px;border-bottom:1px solid #f0f1fa;}
+    .chat-demo-context strong {font-size:17px;color:#29334f;}
+    .chat-demo-context .badge {border-radius:20px;font-size:10px;}
+    .st-key-chat-demo-conversation .st-key-live-chat-frame {border-radius:14px;overflow:hidden!important;}
+    .st-key-chat-demo-conversation > [data-testid="stLayoutWrapper"]:has(.st-key-live-chat-frame) {flex:1 1 0;min-height:0;}
+    .st-key-chat-demo-conversation .st-key-live-chat-frame > [data-testid="stElementContainer"] {height:100%;flex:1;min-height:0;}
+    .st-key-chat-demo-conversation iframe {border:0;border-radius:14px;}
+    @media(max-width:700px) {
+        [data-testid="stMainBlockContainer"]:has(.st-key-chat-demo-layout) {height:auto;min-height:100dvh;padding:12px;}
+        .chat-demo-topbar strong {font-size:18px;}
+        .st-key-chat-demo-layout {height:auto!important;flex:none!important;}
+        .st-key-chat-demo-layout > [data-testid="stLayoutWrapper"] {height:auto!important;flex:none!important;}
+        .st-key-chat-demo-layout [data-testid="stHorizontalBlock"] {flex-direction:column;flex-wrap:nowrap;height:auto!important;flex:none!important;}
+        .st-key-chat-demo-layout [data-testid="stColumn"] {width:100%!important;height:auto!important;flex:none!important;}
+        .st-key-chat-demo-layout [data-testid="stColumn"] > [data-testid="stVerticalBlock"],
+        .st-key-chat-demo-layout [data-testid="stColumn"] > [data-testid="stVerticalBlock"] > [data-testid="stLayoutWrapper"] {height:auto!important;flex:none!important;}
+        .st-key-chat-demo-navigation {height:auto!important;padding:12px;gap:6px;}
+        .chat-demo-nav-title,.chat-demo-nav-note {display:none;}
+        .chat-demo-group {margin:2px 0;font-size:11px;}
+        .st-key-chat-demo-company {display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:6px;}
+        .st-key-chat-demo-external {width:25%;min-width:80px;}
+        .st-key-chat-demo-navigation [data-testid="stButton"] button {min-height:42px;padding:6px;justify-content:center;gap:4px;}
+        .st-key-chat-demo-navigation [data-testid="stButton"] button p {font-size:13px;}
+        .st-key-chat-demo-navigation [data-testid="stButton"] button [data-testid="stIconMaterial"] {display:none;}
+        .st-key-chat-demo-conversation {height:max(480px,calc(100dvh - 280px))!important;min-height:480px!important;flex:none!important;padding:8px;}
+        .st-key-chat-demo-conversation iframe {height:100%!important;}
+        .chat-demo-context {padding:4px;font-size:14px;}
+    }
+    </style>""", unsafe_allow_html=True)
+
+
 def page_header(title, subtitle, eyebrow):
     st.markdown(f'<div class="eyebrow">{escape(eyebrow)}</div>', unsafe_allow_html=True)
     st.title(title)

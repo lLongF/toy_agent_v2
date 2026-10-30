@@ -23,7 +23,7 @@ from toy_profiles import list_toy_profiles
 from ui_jobs import JobManager, ROOT
 from ui_request import validate_request
 from ui_results import attachments, confined, discover_reports, read_report
-from ui_styles import apply_styles, empty_state, metric_cards, page_header
+from ui_styles import apply_styles, apply_chat_demo_styles, empty_state, metric_cards, page_header
 from ui_management import cases_management, tools_management, rules_management, triggers_management
 from asset_store import case_issues
 
@@ -630,21 +630,48 @@ def live_chat_page(name):
 
 
 def chat_demo():
-    """Independent presentation route; reuse the exact same chat renderers/bridge."""
+    """用户对话入口；外层布局独立，设备页面与桥接仍复用原实现。"""
     st.set_page_config(page_title="玩具实时对话", initial_sidebar_state="collapsed")
     apply_styles()
-    st.markdown("""<style>
-        [data-testid="stSidebar"], [data-testid="stSidebarCollapsedControl"],
-        [data-testid="stHeader"] {display:none;}
-        [data-testid="stMainBlockContainer"] {max-width:1440px;}
-        </style>""", unsafe_allow_html=True)
-    st.markdown('<div class="topline"><strong>玩具实时对话</strong><span class="badge">互动体验</span></div>', unsafe_allow_html=True)
+    apply_chat_demo_styles()
+    st.markdown('<div class="chat-demo-topbar"><div><span class="chat-demo-mark">◕</span>'
+                '<strong>玩具实时对话</strong></div><span class="badge">互动体验</span></div>',
+                unsafe_allow_html=True)
     names = list(LIVE_CHAT_URLS)
     requested = st.query_params.get("toy", names[0])
-    name = st.radio("选择玩具", names, index=names.index(requested) if requested in names else 0,
-                    horizontal=True, key="demo_chat_toy", label_visibility="collapsed")
+    name = requested if requested in names else names[0]
+    st.session_state["demo_chat_toy"] = name
     st.query_params["toy"] = name
-    live_chat_page(name)
+
+    def select_toy(selected):
+        st.session_state["demo_chat_toy"] = selected
+        st.query_params["toy"] = selected
+
+    with st.container(key="chat-demo-layout", height="stretch"):
+        navigation, conversation = st.columns([1, 4.4], gap="medium")
+        with navigation:
+            with st.container(key="chat-demo-navigation", height="stretch"):
+                st.markdown('<div class="chat-demo-nav-title">选择玩具</div>', unsafe_allow_html=True)
+                for group, members, key in (
+                    ("公司产品", names[:4], "company"),
+                    ("外部接入", ["小智"], "external"),
+                ):
+                    st.markdown(f'<div class="chat-demo-group">{group}</div>', unsafe_allow_html=True)
+                    with st.container(key=f"chat-demo-{key}"):
+                        for item in members:
+                            st.button(item, key=f"demo_chat_select_{item}", width="stretch",
+                                      type="primary" if item == name else "secondary",
+                                      icon=":material/smart_toy:" if item == "小智" else ":material/toys:",
+                                      on_click=select_toy, args=(item,))
+                st.markdown('<div class="chat-demo-nav-note">选一位伙伴，开启轻松对话</div>', unsafe_allow_html=True)
+        with conversation:
+            with st.container(key="chat-demo-conversation", height="stretch"):
+                category = "外部接入" if name == "小智" else "公司产品"
+                st.markdown(f'<div class="chat-demo-context"><strong>{escape(name)} · 实时对话</strong>'
+                            f'<span class="badge">{category}</span></div>', unsafe_allow_html=True)
+                with st.container(key="live-chat-frame", height="stretch"):
+                    source = xiaozhi_chat_bridge().html() if name == "小智" else LIVE_CHAT_URLS[name]
+                    st.iframe(source, height="stretch", alt=f"{name}实时对话")
 
 
 def release_demo():
