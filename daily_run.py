@@ -25,8 +25,6 @@ def main() -> int:
     reports_root.mkdir(exist_ok=True)
     stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     toy_ids = selected_toy_ids()
-    api_key = (os.environ.get("DASHSCOPE_API_KEY") or "").strip()
-    deepseek_api_key = (os.environ.get("DEEPSEEK_API_KEY") or "").strip()
     fast = os.environ.get("DAILY_FAST", "").strip() in ("1", "true", "yes")
 
     overall = 0
@@ -53,18 +51,18 @@ def main() -> int:
             "--reports-dir",
             str(toy_reports),
         ]
-        token = toy.resolve_token()
-        if token:
-            cmd += ["--token", token]
-        if api_key:
-            cmd += ["--api-key", api_key]
-        if deepseek_api_key:
-            cmd += ["--deepseek-api-key", deepseek_api_key]
+        if os.environ.get("TOY_ENVIRONMENT", "").strip():
+            cmd += ["--environment", os.environ["TOY_ENVIRONMENT"].strip()]
+        if os.environ.get("TOY_DATASETS", "").strip():
+            cmd += ["--datasets", os.environ["TOY_DATASETS"].strip()]
+        if "TOY_JUDGES" in os.environ:
+            cmd += ["--judges", os.environ["TOY_JUDGES"].strip()]
+        # CLI 会自行读取相同环境变量 / 玩具配置，不将凭据复制到进程参数中。
         if fast:
             cmd.append("--fast")
 
         print(f"开始每日测试 [{toy.id}]:", " ".join(cmd[:8]), "...", flush=True)
-        proc = subprocess.run(cmd, cwd=str(ROOT))
+        proc = subprocess.run(cmd, cwd=str(ROOT), env=dict(os.environ, TOY_EVAL_TRIGGER="scheduled"))
         if proc.returncode != 0:
             extras.append(f"{toy.id} 退出码 {proc.returncode}")
             overall = overall or proc.returncode
@@ -72,6 +70,7 @@ def main() -> int:
             generated.append(xlsx)
         else:
             extras.append(f"{toy.id} 未生成 Excel")
+            overall = overall or 1
 
     extra = "；".join(extras)
     if generated:

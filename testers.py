@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any, Awaitable, Callable, Dict, List
 
-from config import DialogueGroup, TestContext, dialogue_group_to_dict, dialogue_turn_expected_tool, turn_requires_mcp
+from config import DialogueGroup, TestContext, dialogue_group_to_dict, turn_requires_mcp
 from mcp import MCPInspector, combined_text_for_mcp_no_tool_llm_judge
 
 # 各个不同类别的实际测试逻辑（按类别封装）
@@ -68,6 +68,25 @@ class MCPCallTester:
 
     async def run(self, group: DialogueGroup) -> Dict[str, Any]:
         if not self.ctx.state.websocket:
+            return await self._run(group)
+        turns = []
+        for turn in group.turns:
+            try:
+                result = await self._run(DialogueGroup(group.group_id, group.category, [turn]))
+                turns.extend(result["turn_results"])
+            except Exception as exc:
+                # 协议/发送异常不是业务规则失败，不填 rule_score=0。
+                turns.append({"sheet_row": turn.sheet_row, "case_id": turn.case_id,
+                              "expect_tool_call": turn.expect_tool_call, "tool_name": turn.tool_name,
+                              "mcp_required": turn_requires_mcp(turn.expect_tool_call),
+                              "evaluation_mode": "embedded_rule" if turn_requires_mcp(turn.expect_tool_call) else "llm",
+                              "execution_error": str(exc), "status": "error", "pass": False,
+                              "utterances": []})
+        return {"handler": "mcp_call", "status": "completed", "turn_results": turns,
+                "group_pass": bool(turns) and all(t.get("pass", False) for t in turns)}
+
+    async def _run(self, group: DialogueGroup) -> Dict[str, Any]:
+        if not self.ctx.state.websocket:
             return {
                 "handler": "mcp_call",
                 "status": "skipped",
@@ -85,7 +104,7 @@ class MCPCallTester:
                 start_idx = len(self.ctx.state.router_logs)
                 self.ctx.state.reset_response_collection()
                 await self.ctx.pipeline.send_text_message(um)
-                expected_tool = dialogue_turn_expected_tool(turn)
+                expected_tool = turn.tool_name
 
                 if require_mcp:
                     collect_result = await self.mcp.collect_result_after_send(start_idx)
@@ -106,9 +125,6 @@ class MCPCallTester:
                     elif not mcp_calls:
                         passed = False
                         reason = "收到 MCP 消息，但没有 tools/call"
-                    elif not bool(collect_result.get("mcp_reply_confirmed", False)):
-                        passed = False
-                        reason = "收到 tools/call，但工具结果未确认发送完成"
                     else:
                         matched_calls = [c for c in mcp_calls if self.mcp.match_expected_tool(expected_tool, c)]
                         passed = len(matched_calls) > 0
@@ -132,6 +148,8 @@ class MCPCallTester:
                         "assistant_text_from_logs": assistant_from_logs,
                         "mcp_non_call_events": collect_result.get("mcp_non_call_events", []),
                     }
+                    if mcp_calls and not row["mcp_reply_confirmed"]:
+                        row["execution_error"] = "收到 tools/call，但工具结果未确认发送完成"
                     if not passed:
                         row["server_actual_when_no_valid_mcp_call"] = server_actual
                     utterance_results.append(row)
@@ -163,7 +181,7 @@ class MCPCallTester:
                     utterance_results.append(row)
 
             combined_server_text = "\n".join(p for p in combined_text_parts if p)
-            final_pass = turn_pass if require_mcp else False
+            final_pass = bool(utterance_results) and turn_pass if require_mcp else False
             turn_row: Dict[str, Any] = {
                 "sheet_row": turn.sheet_row,
                 "case_id": turn.case_id,
@@ -174,8 +192,14 @@ class MCPCallTester:
                 "utterances": utterance_results,
                 "combined_server_text": combined_server_text,
                 "mcp_required": require_mcp,
+                "evaluation_mode": "embedded_rule" if require_mcp else "llm",
                 "pass": final_pass,
             }
+            if require_mcp and utterance_results:
+                turn_row["rule_score"] = int(final_pass)
+            errors = [u["execution_error"] for u in utterance_results if u.get("execution_error")]
+            if errors:
+                turn_row["execution_error"] = "; ".join(errors)
             if not require_mcp:
                 turn_row["judge_result"] = {"judge_pending": True}
             turn_results.append(turn_row)
@@ -336,7 +360,7 @@ class ShortTermMemoryTester:
                     mcp_collect = await self.mcp.collect_result_after_send(start_idx)
                     mcp_calls = mcp_collect.get("mcp_calls", [])
                     saw_mcp = bool(mcp_collect.get("saw_mcp", False))
-                    expected_tool = dialogue_turn_expected_tool(turn)
+                    expected_tool = turn.tool_name
                     avis = str(mcp_collect.get("assistant_visible_text", "") or "")
                     alogs = str(mcp_collect.get("assistant_text_from_logs", "") or "")
                     actual_merge = (alogs or avis or server_text).strip()
@@ -356,14 +380,6 @@ class ShortTermMemoryTester:
                             "saw_mcp": saw_mcp,
                             "mcp_calls": mcp_calls,
                         }
-                    elif not bool(mcp_collect.get("mcp_reply_confirmed", False)):
-                        mcp_result = {
-                            "required": True,
-                            "pass": False,
-                            "reason": "tools/call received but tool result was not confirmed sent",
-                            "saw_mcp": saw_mcp,
-                            "mcp_calls": mcp_calls,
-                        }
                     else:
                         matched_calls = [c for c in mcp_calls if self.mcp.match_expected_tool(expected_tool, c)]
                         mcp_result = {
@@ -376,6 +392,8 @@ class ShortTermMemoryTester:
                             "mcp_calls": mcp_calls,
                             "expected_tool": expected_tool,
                         }
+                    if mcp_calls and not mcp_collect.get("mcp_reply_confirmed", False):
+                        mcp_result["execution_error"] = "tools/call received but tool result was not confirmed sent"
                     mcp_result["assistant_visible_text"] = avis
                     mcp_result["assistant_text_from_logs"] = alogs
                     mcp_result["mcp_non_call_events"] = mcp_collect.get("mcp_non_call_events", [])
@@ -516,6 +534,16 @@ def build_test_handlers(ctx: TestContext) -> tuple[Dict[str, TestHandler], TestH
         "短期记忆": short_mem.run,
         "长期记忆": long_mem.run,
     }
+    # The per-run snapshot, not a live registry read, controls dispatch. Preserve
+    # group.category so custom names remain distinct in sessions and reports.
+    mapping = getattr(ctx.cfg, "rules_snapshot", {}).get("category_handlers", {})
+    by_handler = {"basic_qa": basic_qa.run, "mcp_call": mcp.run, "emotion": emotion.run,
+                  "knowledge_base": kb.run, "short_term_memory": short_mem.run,
+                  "long_term_memory": long_mem.run}
+    for category, handler in mapping.items():
+        if handler not in by_handler:
+            raise ValueError(f"类型执行方式不受支持：{category}/{handler}")
+        handlers[category] = by_handler[handler]
     return handlers, default.run
 
 class ConversationTestDispatcher:

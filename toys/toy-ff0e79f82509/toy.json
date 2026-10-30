@@ -1,0 +1,16 @@
+{
+  "name": "仪宝",
+  "credential_ref": "local:c96cff2178d440449ef842e048bc3110",
+  "capabilities": {
+    "text": "supported",
+    "context": "supported",
+    "knowledge_base": "supported",
+    "tool_injection": "supported",
+    "tool_observation": "supported"
+  },
+  "environments": {},
+  "enabled": true,
+  "id": "toy-ff0e79f82509",
+  "cases_xlsx": "../../data/测试样例.xlsx",
+  "mcp_tools_file": "../../data/工具描述.txt"
+}

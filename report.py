@@ -5,19 +5,22 @@ from __future__ import annotations
 import json
 from datetime import datetime
 from pathlib import Path
+from copy import copy
 from typing import Any, Dict, List, Optional
 
 import openpyxl
 
-from config import _dialogue_worksheet, _ensure_test_result_columns, ensure_dir
+from config import _dialogue_worksheet, _ensure_test_result_columns, ensure_dir, load_dialogue_groups_from_xlsx
+from safe_output import redact_data, redact_text
 
 # 测试报告生成
 class ReportWriter:
-    def __init__(self, reports_dir: Path):
+    def __init__(self, reports_dir: Path, sensitive_values=()):
         self.reports_dir = reports_dir
+        self.sensitive_values = list(sensitive_values)
 
-    @staticmethod
-    def _turn_export_fields(turn_result: Dict[str, Any]) -> Dict[str, Any]:
+    @classmethod
+    def _turn_export_fields(cls, turn_result: Dict[str, Any]) -> Dict[str, Any]:
         """从单条 turn 结果提取写入 xlsx 的字段。"""
         cst = turn_result.get("combined_server_text")
         utterances = turn_result.get("utterances") or []
@@ -91,8 +94,8 @@ class ReportWriter:
         else:
             judge_status = "未使用（MCP规则校验）"
 
-        qwen_score, qwen_reason, deepseek_score, deepseek_reason = self._split_judge_columns(judge_result)
-        combined_score = self._combined_score_text(judge_result)
+        qwen_score, qwen_reason, deepseek_score, deepseek_reason = cls._split_judge_columns(judge_result)
+        combined_score = cls._combined_score_text(judge_result)
 
         mcp_reason = ""
         if not judge_result:
@@ -119,7 +122,13 @@ class ReportWriter:
             "deepseek_score": deepseek_score,
             "deepseek_reason": deepseek_reason,
             "combined_score": combined_score,
-            "result_label": "评分失败" if judge_status == "评分失败" else ("通过" if bool(turn_result.get("pass", False)) else "不通过"),
+            "rule_score": turn_result.get("rule_score"),
+            "evaluation_mode": turn_result.get("evaluation_mode", "llm" if judge_result else "embedded_rule"),
+            "execution_error": turn_result.get("execution_error", ""),
+            "threshold": (judge_result.get("threshold") if isinstance(judge_result, dict) else None),
+            "expected_tool": turn_result.get("tool_name", ""),
+            "judge_details": {str(j.get("judge_name")): j for j in judge_result.get("judges", []) if j.get("judge_name")}, 
+            "result_label": "未执行" if turn_result.get("execution_error") else ("评分失败" if judge_status == "评分失败" else ("通过" if bool(turn_result.get("pass", False)) else "不通过")),
         }
 
     @staticmethod
@@ -233,12 +242,12 @@ class ReportWriter:
                     "deepseek_score": "",
                     "deepseek_reason": "",
                     "combined_score": "",
-                    "result_label": "不通过",
+                    "result_label": "未执行",
                     **handshake_fields,
                 }
         return out
 
-    def _export_test_results_to_xlsx(self, cases_xlsx: Path, results: List[Dict[str, Any]], out_path: Path) -> Path:
+    def _export_test_results_to_xlsx(self, cases_xlsx: Path, results: List[Dict[str, Any]], out_path: Path, selected_rows=None, dataset_snapshot=None) -> Path:
         """在原用例表基础上追加测试结果、MCP 信息和裁判详情。"""
         row_map = self._build_sheet_row_export_map(results)
         wb = openpyxl.load_workbook(cases_xlsx)
@@ -267,7 +276,15 @@ class ReportWriter:
             "DeepSeek评分",
             "DeepSeek原因",
             "综合评分",
+            "判定方式", "通过基准", "规则得分", "预期嵌入式工具", "执行异常", "测试集", "源工作表", "源行号",
         ]
+        scene_column = next((c.column for c in ws[1] if c.value == "接入场景"), ws.max_column + 1)
+        ws.cell(row=1, column=scene_column, value="接入场景")
+        for row in range(2, ws.max_row + 1):
+            ws.cell(row, scene_column, value=getattr(self, "connection_scene", "company"))
+        dynamic_judges = list(dict.fromkeys(identity for fields in row_map.values() for identity in fields.get("judge_details", {}) if identity not in {"qwen", "deepseek"}))
+        for identity in dynamic_judges:
+            extra_headers.extend([identity + "评分", identity + "原因"])
         base_col = _ensure_test_result_columns(ws, extra_headers)
         for r in range(2, ws.max_row + 1):
             exp = row_map.get(r)
@@ -281,7 +298,38 @@ class ReportWriter:
             ws.cell(row=r, column=base_col + 5, value=exp.get("deepseek_score", ""))
             ws.cell(row=r, column=base_col + 6, value=exp.get("deepseek_reason", ""))
             ws.cell(row=r, column=base_col + 7, value=exp.get("combined_score", ""))
+            origin = (dataset_snapshot or {}).get("rows", {}).get(str(r), {})
+            extras = [exp.get("evaluation_mode", ""), exp.get("threshold"), exp.get("rule_score"), exp.get("expected_tool", ""),
+                      exp.get("execution_error", ""), origin.get("dataset_name", ""), origin.get("sheet", ""), origin.get("row")]
+            for offset, value in enumerate(extras, 8):
+                ws.cell(row=r, column=base_col + offset, value=value)
+            for index, identity in enumerate(dynamic_judges):
+                detail = exp.get("judge_details", {}).get(identity, {})
+                ws.cell(row=r, column=base_col + 16 + index * 2, value=detail.get("score"))
+                ws.cell(row=r, column=base_col + 17 + index * 2, value=detail.get("reason", ""))
         ensure_dir(out_path.parent)
+        for row in ws.iter_rows(min_row=2, min_col=base_col, max_col=base_col + len(extra_headers) - 1):
+            for cell in row:
+                if isinstance(cell.value, str):
+                    cell.value = redact_text(cell.value, self.sensitive_values)
+        if selected_rows is not None:
+            groups = load_dialogue_groups_from_xlsx(cases_xlsx)
+            source_rows = {t.sheet_row for g in groups for t in g.turns}
+            if set(selected_rows) != source_rows:
+                # 在导出副本内展开类别合并单元格，再移除未选行；源 Excel 不变。
+                type_column = next(c.column for c in ws[1] if c.value == "类型")
+                for merged in list(ws.merged_cells.ranges):
+                    if merged.min_col == merged.max_col == type_column and merged.min_row >= 2:
+                        style = copy(ws.cell(merged.min_row, type_column)._style)
+                        first, last = merged.min_row, merged.max_row
+                        ws.unmerge_cells(str(merged))
+                        for number in range(first, last + 1):
+                            ws.cell(number, type_column)._style = copy(style)
+                for group in groups:
+                    for turn in group.turns:
+                        ws.cell(turn.sheet_row, type_column).value = group.category
+                for number in sorted(source_rows - set(selected_rows), reverse=True):
+                    ws.delete_rows(number)
         wb.save(out_path)
         wb.close()
         return out_path
@@ -294,31 +342,60 @@ class ReportWriter:
         export_xlsx: Optional[Path] = None,
     ) -> Dict[str, str]:
         ensure_dir(self.reports_dir)
+        self.connection_scene = protocol_info.get("connection_scene", "company")
         ts = datetime.now().strftime("%Y%m%d_%H%M%S")
         toy_id = str(protocol_info.get("toy_id") or "").strip() if isinstance(protocol_info, dict) else ""
         prefix = f"{toy_id}_" if toy_id else ""
         detail = self.reports_dir / f"{prefix}text_result_{ts}.json"
         summary = self.reports_dir / f"{prefix}text_summary_{ts}.md"
+        xlsx_dest = export_xlsx if export_xlsx is not None else (self.reports_dir / f"{prefix}text_result_{ts}_export.xlsx")
+        protocol_info = dict(protocol_info)
+        protocol_info["report_files"] = {"detail_report": str(detail), "summary_report": str(summary)}
+        if cases_xlsx is not None and cases_xlsx.is_file():
+            protocol_info["report_files"]["xlsx_export"] = str(xlsx_dest)
 
         detail.write_text(
-            json.dumps({"protocol_info": protocol_info, "results": results}, ensure_ascii=False, indent=2),
+            json.dumps(redact_data({"protocol_info": protocol_info, "results": results}, self.sensitive_values), ensure_ascii=False, indent=2),
             encoding="utf-8",
         )
         lines = [
             "# 文本输入测试框架摘要",
             "",
             f"- 玩具: {protocol_info.get('toy_id') or '-'}",
-            f"- 用例总数: {len(results)}",
+            f"- 接入场景: {protocol_info.get('connection_scene', 'company')} / {protocol_info.get('target_name', '')}",
+            f"- 用例总数: {(protocol_info.get('data_precheck') or {}).get('turn_count', sum(len(g.get('turn_results') or []) for g in results))}",
+            f"- 类型分组数: {len(results)}",
             f"- 生成时间: {ts}",
             "",
             "## 说明",
             "- 协议骨架已对齐：OTA -> WebSocket -> hello -> listen/manual/detect",
-            "- 裁判模型与评测流程全仓库共用；各玩具只换用例、工具描述和 token",
+            "- 玩具接口、环境、能力与测试集使用当次配置快照；历史报告不重判",
+            "- 嵌入式规则验证工具名命中，设备回包为占位结果，不验证真实电量或物理动作；规则分不计入语言平均分", 
         ]
         summary.write_text("\n".join(lines) + "\n", encoding="utf-8")
+        from ui_results import normalise_report
+        statistics = normalise_report({"protocol_info": protocol_info, "results": results})
+        metric = statistics["metrics"]
+        with summary.open("a", encoding="utf-8") as file:
+            file.write("\n## 评测结论\n")
+            file.write(f"- 通过 {metric['passed_count']}；业务失败 {metric['failed_count']}；评分失败 {metric['judge_error_count']}；未执行 {metric['unevaluated_count']}\n")
+            rate = f"{metric['pass_rate']:.1%}" if metric["pass_rate"] is not None else "不可计算"
+            average = f"{metric['average_score']:.3f}" if metric["average_score"] is not None else "不可计算"
+            file.write(f"- 业务通过率 {rate}（排除评分失败与未执行）；有效综合分均值 {average}\n")
+            file.write("\n| 类型 | 用例 | 通过 | 业务失败 | 评分失败 | 未执行 |\n|---|---:|---:|---:|---:|---:|\n")
+            for item in statistics["category_metrics"]:
+                file.write(f"| {item['category']} | {item['case_count']} | {item['passed_count']} | {item['failed_count']} | {item['judge_error_count']} | {item['unevaluated_count']} |\n")
         out: Dict[str, str] = {"detail_report": str(detail), "summary_report": str(summary)}
         if cases_xlsx is not None and cases_xlsx.is_file():
-            xlsx_dest = export_xlsx if export_xlsx is not None else (self.reports_dir / f"{prefix}text_result_{ts}_export.xlsx")
-            self._export_test_results_to_xlsx(cases_xlsx, results, xlsx_dest)
+            export_results = list(results)
+            recorded = {int(t["sheet_row"]) for g in results for t in (g.get("case_spec") or {}).get("turns", [])}
+            recorded.update(int(t["sheet_row"]) for g in results for t in g.get("turn_results", []) if t.get("sheet_row") is not None)
+            for spec in protocol_info.get("selected_case_specs") or []:
+                missing = [t for t in spec["turns"] if int(t["sheet_row"]) not in recorded]
+                if missing:
+                    export_results.append({"category": spec["category"], "case_spec": {"turns": missing}, "reason": protocol_info.get("run_aborted", "采集未完成")})
+            self._export_test_results_to_xlsx(cases_xlsx, export_results, xlsx_dest,
+                                              selected_rows=(protocol_info.get("selection") or {}).get("case_rows"),
+                                              dataset_snapshot=protocol_info.get("dataset_snapshot"))
             out["xlsx_export"] = str(xlsx_dest)
         return out

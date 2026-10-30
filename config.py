@@ -228,14 +228,10 @@ def load_dialogue_groups_from_xlsx(path: Path) -> List[DialogueGroup]:
         i_id = col_idx("用例编号")
         i_msg = col_idx("消息列表")
         i_exp = col_idx("预期结果/非预期结果", "预期结果")
-        i_tool = col_idx("是否工具调用")
+        i_tool = _col_idx_optional(col, "是否工具调用")
         i_tool_name = _col_idx_optional(col, "工具名称")
         # 多了个工具描述列，应该是单纯对工具进行描述
         i_tool_arg = _col_idx_optional(col, "工具参数", "工具参数文字描述")
-        if i_tool_arg is None:
-            raise ValueError(
-                f"xlsx 缺少工具参数列（需其一: 工具参数, 工具参数文字描述）；实际表头: {headers}"
-            )
 
         last_category = ""
         buckets: Dict[str, List[DialogueTurn]] = {}
@@ -265,10 +261,10 @@ def load_dialogue_groups_from_xlsx(path: Path) -> List[DialogueGroup]:
             user_msgs = _split_user_messages(row[i_msg] if i_msg < len(row) else None)
             exp = row[i_exp] if i_exp < len(row) else ""
             expected_outcome = str(exp).strip() if exp is not None else ""
-            tool_flag = _parse_tool_flag(row[i_tool] if i_tool < len(row) else None)
+            tool_flag = _parse_tool_flag(row[i_tool] if i_tool is not None and i_tool < len(row) else None)
             if tool_flag is None:
                 tool_flag = False
-            tparam = row[i_tool_arg] if i_tool_arg < len(row) else None
+            tparam = row[i_tool_arg] if i_tool_arg is not None and i_tool_arg < len(row) else None
             tool_parameters = str(tparam).strip() if tparam is not None and str(tparam).strip() else None
             tname_cell = row[i_tool_name] if i_tool_name is not None and i_tool_name < len(row) else None
             tool_name = str(tname_cell).strip() if tname_cell is not None and str(tname_cell).strip() else None
@@ -379,6 +375,30 @@ class Config:
     device_mac_random: bool = False
     # 当前玩具 id，对应 toys/<id>/
     toy_id: str = DEFAULT_TOY_ID
+    # 可选范围；默认空表示全量，保持原 CLI 行为。
+    selected_categories: List[str] = field(default_factory=list)
+    selected_case_ids: List[str] = field(default_factory=list)
+    selected_case_rows: List[int] = field(default_factory=list)
+    judge_template_file: Path = field(default_factory=lambda: Path(__file__).resolve().parent / "templates/template.md")
+    thresholds_file: Path = field(default_factory=lambda: Path(__file__).resolve().parent / "settings/evaluation_thresholds.json")
+    rules_snapshot: Dict[str, Any] = field(default_factory=dict)
+    judge_category: str = "基础问答"
+    trigger_type: str = "manual_cli"
+    run_id: str = ""
+    tools_source: Dict[str, Any] = field(default_factory=dict)
+    case_snapshot: Optional[Path] = None
+    environment: str = ""
+    selected_dataset_ids: List[str] = field(default_factory=list)
+    dataset_snapshot: Dict[str, Any] = field(default_factory=dict)
+    toy_snapshot: Dict[str, Any] = field(default_factory=dict)
+    selected_judge_ids: Optional[List[str]] = None
+    judge_endpoints_snapshot: List[Dict[str, Any]] = field(default_factory=list)
+    judge_credentials: Dict[str, str] = field(default_factory=dict)
+    connection_scene: str = "company"
+    scene_identity_generated: bool = False
+    # 原入口默认 OTA；发版自测显式选择直连。
+    connection_mode: str = "ota"
+    release_environment: str = ""
 
 # 连接与消息搜集
 @dataclass

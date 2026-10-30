@@ -15,6 +15,21 @@ from config import (
 )
 from toy_profiles import DEFAULT_TOY_ID, TOYS_DIR, format_toy_catalog, load_toy_profile
 
+
+def apply_fast_mode(cfg: Config) -> None:
+    """CLI 和 Streamlit 共用同一组 Fast 参数。"""
+    cfg.send_interval = 0.0
+    cfg.hello_drain_per_wait = 0.2
+    cfg.hello_drain_idle_rounds = 3
+    cfg.hello_mcp_ready_timeout = 6.0
+    cfg.collect_quiet_rounds = 4
+    cfg.collect_quiet_seconds = 1.0
+    cfg.collect_phase2_max = 1.5
+    cfg.mcp_no_call_grace_seconds = 0.5
+    cfg.mcp_completion_quiet_seconds = 0.6
+    if cfg.judge_concurrency == 6:
+        cfg.judge_concurrency = 8
+
 class _ChineseHelpFormatter(argparse.HelpFormatter):
     def add_usage(self, usage, actions, groups, prefix=None):
         if prefix is None:
@@ -22,7 +37,7 @@ class _ChineseHelpFormatter(argparse.HelpFormatter):
         return super().add_usage(usage, actions, groups, prefix)
 
 
-def parse_args() -> tuple[Config, bool]:
+def parse_args(argv=None) -> tuple[Config, bool]:
     """解析命令行。玩具只覆盖用例/工具/token，其余默认值与 config.Config 注释一致。"""
     _base = Path(__file__).resolve().parent
     parser = argparse.ArgumentParser(
@@ -79,6 +94,11 @@ def parse_args() -> tuple[Config, bool]:
         help="MCP 工具描述文件；留空则用 toys/<id>/工具描述.txt",
     )
     parser.add_argument("--reports-dir", default="", help="报告输出目录；留空则写入 reports/<玩具id>/")
+    parser.add_argument("--environment", default="", help="玩具运行环境名；空为默认环境")
+    parser.add_argument("--judges", default=None, help="本次裁判模型ID，逗号分隔；不传保留原双裁判")
+    parser.add_argument("--datasets", default="", help="公共或当前玩具专属测试集 ID，逗号分隔")
+    parser.add_argument("--categories", default="", help="仅运行指定类型，多个类型用逗号分隔；默认全量")
+    parser.add_argument("--case-ids", default="", help="仅运行指定用例编号，多个编号用逗号分隔")
     parser.add_argument("--recv-timeout", type=float, default=3.0, help="单次接收超时时间（秒）")
     parser.add_argument("--send-interval", type=float, default=0.2, help="对话组之间的间隔时间（秒）")
     parser.add_argument(
@@ -145,7 +165,7 @@ def parse_args() -> tuple[Config, bool]:
         help="执行完整测试流水线（连接、握手排空、跑用例、写报告）",
     )
     parser._optionals.title = "可选参数"
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
     if args.list_toys:
         print(format_toy_catalog(TOYS_DIR))
         raise SystemExit(0)
@@ -180,7 +200,8 @@ def parse_args() -> tuple[Config, bool]:
         device_mac=selected_mac,
         client_id=args.client_id,
         device_name=args.device_name,
-        token=toy.resolve_token(args.token),
+        token=str(args.token).strip(),
+        tools_source={} if str(args.mcp_tools_file).strip() else toy.tools_source,
         cases_xlsx=cases_xlsx,
         mcp_tools_file=mcp_tools_file,
         reports_dir=reports_dir,
@@ -201,17 +222,21 @@ def parse_args() -> tuple[Config, bool]:
         firmware_version=str(args.firmware_version).strip() or DEFAULT_FIRMWARE_VERSION,
         device_mac_random=mac_is_random,
         toy_id=toy.id,
+        selected_categories=[s.strip() for s in args.categories.split(",") if s.strip()],
+        selected_case_ids=[s.strip() for s in args.case_ids.split(",") if s.strip()],
+        trigger_type=(os.getenv("TOY_EVAL_TRIGGER") or "manual_cli"),
     )
+    from toy_profiles import apply_toy_environment
+    cfg = apply_toy_environment(cfg, toy, args.environment)
+    cfg.selected_dataset_ids = [s.strip() for s in args.datasets.split(",") if s.strip()]
+    cfg.selected_judge_ids = None if args.judges is None else [s.strip() for s in args.judges.split(",") if s.strip()]
+    # 显式 CLI 连接参数优先于环境默认值。
+    explicit = list(argv if argv is not None else __import__("sys").argv[1:])
+    for option, field in (("--ota-url", "ota_url"), ("--ws-url", "ws_url"), ("--device-mac", "device_mac"),
+                          ("--client-id", "client_id"), ("--device-name", "device_name"),
+                          ("--board-ip", "board_ip"), ("--board-type", "board_type"), ("--firmware-version", "firmware_version")):
+        if any(x == option or x.startswith(option + "=") for x in explicit):
+            setattr(cfg, field, getattr(args, field))
     if args.fast:
-        cfg.send_interval = 0.0
-        cfg.hello_drain_per_wait = 0.2
-        cfg.hello_drain_idle_rounds = 3
-        cfg.hello_mcp_ready_timeout = 6.0
-        cfg.collect_quiet_rounds = 4
-        cfg.collect_quiet_seconds = 1.0
-        cfg.collect_phase2_max = 1.5
-        cfg.mcp_no_call_grace_seconds = 0.5
-        cfg.mcp_completion_quiet_seconds = 0.6
-        if int(args.judge_concurrency) == 6:
-            cfg.judge_concurrency = 8
+        apply_fast_mode(cfg)
     return cfg, bool(args.run)

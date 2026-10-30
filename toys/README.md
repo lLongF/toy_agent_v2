@@ -13,6 +13,11 @@
 - `token`：该玩具服务令牌。也可改用环境变量 `TOY_AGENT_TOKEN` 或 `TOY_AGENT_TOKEN_<ID>`
 - `cases_xlsx`：可选。不写则用本目录 `测试样例.xlsx`
 - `mcp_tools_file`：可选。不写则用本目录 `工具描述.txt`
+- `tools_source`：可选。默认 `{"type":"local"}`；远程来源可配置 `type=mcp_http`、`url`、`protocol_version`、`token_env`。URL 必须使用服务方提供的真实 MCP 地址，鉴权仅引用环境变量名。
+
+工具页可以保存来源并主动刷新。远程支持 Streamable HTTP 2025-03-26 / 2025-06-18 / 2025-11-25 / 2026-07-28 的工具列表，含 JSON / SSE 与分页。
+每轮评测重新读取来源；远程失败不回退本地。显式 CLI `--mcp-tools-file` 优先使用该本地文件。
+工具发现只获取定义，设备侧工具占位响应和调用验证继续沿用原链路。
 
 ## 加一个新玩具
 

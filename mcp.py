@@ -44,6 +44,8 @@ class MCPInspector:
             msg = item.get("message", {}) or {}
             payload = msg.get("payload", {}) or {}
             params = payload.get("params", {}) or {}
+            if not isinstance(params, dict) or not isinstance(params.get("name"), str) or not params["name"].strip():
+                raise ValueError("MCP tools/call 缺少有效工具名称")
             calls.append(
                 {
                     "call_id": str(payload.get("id", "")),
@@ -57,12 +59,8 @@ class MCPInspector:
     # mcp工具调用匹配
     @staticmethod
     def match_expected_tool(expected: Optional[str], call: Dict[str, Any]) -> bool:
-        if not expected or not expected.strip():
-            return True
-        exp = expected.strip().lower()
-        tool_name = str(call.get("tool_name", "")).lower()
-        tool_args_text = json.dumps(call.get("tool_args", {}), ensure_ascii=False).lower()
-        return exp in tool_name or exp in tool_args_text
+        return bool(isinstance(expected, str) and expected.strip()
+                    and call.get("tool_name") == expected.strip())
 
     # 格式化mcp调用消息 用于短期记忆中的上下文构建
     @staticmethod

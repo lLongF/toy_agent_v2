@@ -15,9 +15,14 @@ daily_test:
     PYTHONUTF8: "1"
     PYTHONIOENCODING: "utf-8"
   before_script:
-    - python -m pip install -r requirements.txt
+    - python -c "import sys; assert sys.version_info[:2] == (3, 11), 'Python 3.11.x required'"
+    - python -m venv .venv
+    - .\.venv\Scripts\python.exe -m pip install -r requirements.txt
+    - .\.venv\Scripts\python.exe scripts/check_environment.py
+    - .\.venv\Scripts\python.exe -m pip check
+    - .\.venv\Scripts\python.exe -m unittest discover -s tests -v
   script:
-    - python daily_run.py
+    - .\.venv\Scripts\python.exe daily_run.py
   artifacts:
     when: always
     paths:

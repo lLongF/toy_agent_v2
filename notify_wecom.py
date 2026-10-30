@@ -22,12 +22,12 @@ def webhook_key(url: str) -> str:
     return keys[0]
 
 
-def xlsx_stats(path: Path) -> Tuple[int, int, int, int]:
-    """返回 (总行数, 通过, 不通过, 评分失败)。读不到则全 0。"""
+def xlsx_detailed_stats(path: Path):
+    """返回 (总行数, 通过, 业务不通过, 评分失败, 未执行)。"""
     try:
         import openpyxl
     except ImportError:
-        return 0, 0, 0, 0
+        return 0, 0, 0, 0, 0
     wb = openpyxl.load_workbook(path, read_only=True, data_only=True)
     try:
         ws = wb["Test case"] if "Test case" in wb.sheetnames else wb.active
@@ -38,8 +38,8 @@ def xlsx_stats(path: Path) -> Tuple[int, int, int, int]:
                 col = i
                 break
         if col is None:
-            return 0, 0, 0, 0
-        total = passed = failed = judge_failed = 0
+            return 0, 0, 0, 0, 0
+        total = passed = failed = judge_failed = unexecuted = 0
         for row in ws.iter_rows(min_row=2, values_only=True):
             if not row or all(v is None or str(v).strip() == "" for v in row):
                 continue
@@ -49,11 +49,18 @@ def xlsx_stats(path: Path) -> Tuple[int, int, int, int]:
                 passed += 1
             elif val == "评分失败":
                 judge_failed += 1
+            elif val in ("未执行", ""):
+                unexecuted += 1
             else:
                 failed += 1
-        return total, passed, failed, judge_failed
+        return total, passed, failed, judge_failed, unexecuted
     finally:
         wb.close()
+
+
+def xlsx_stats(path: Path) -> Tuple[int, int, int, int]:
+    """兼容原四元组接口；未执行不混入业务失败。"""
+    return xlsx_detailed_stats(path)[:4]
 
 
 def send_text(webhook: str, content: str) -> None:
@@ -94,9 +101,9 @@ def notify(xlsx: Optional[Path], webhook: str, extra: str = "") -> None:
     if extra:
         lines.append(extra.strip())
     if xlsx and xlsx.is_file():
-        total, passed, failed, judge_failed = xlsx_stats(xlsx)
+        total, passed, failed, judge_failed, unexecuted = xlsx_detailed_stats(xlsx)
         if total:
-            lines.append(f"用例 {total} 条，通过 {passed}，不通过 {failed}，评分失败 {judge_failed}")
+            lines.append(f"用例 {total} 条，通过 {passed}，不通过 {failed}，评分失败 {judge_failed}，未执行 {unexecuted}")
         lines.append(f"附件：{xlsx.name}")
     else:
         lines.append("没有生成结果 Excel。")

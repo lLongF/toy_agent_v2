@@ -1,0 +1,7 @@
+{
+  "daily_enabled": false,
+  "daily_time": "10:00",
+  "timezone": "Asia/Shanghai",
+  "toy_ids": ["default"],
+  "watch_events": true
+}

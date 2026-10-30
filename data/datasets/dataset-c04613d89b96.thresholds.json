@@ -1,0 +1,23 @@
+{
+  "version": 1,
+  "dataset_id": "dataset-c04613d89b96",
+  "dataset_sha256": "fd1ff25bd13a21933e68c6cd392f16d707fc5d6504976ef88e9830efe9da29ba",
+  "case_thresholds": [
+    {
+      "dataset_id": "dataset-c04613d89b96",
+      "category": "基础问答",
+      "case_id": "1",
+      "threshold": 0.8,
+      "expect_tool_call": false,
+      "sheet_row": 2
+    },
+    {
+      "dataset_id": "dataset-c04613d89b96",
+      "category": "基础问答",
+      "case_id": "2",
+      "threshold": 0.7,
+      "expect_tool_call": false,
+      "sheet_row": 3
+    }
+  ]
+}

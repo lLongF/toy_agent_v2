@@ -4,6 +4,9 @@ from __future__ import annotations
 
 import asyncio
 import json
+import ssl
+
+import certifi
 from typing import Any, Dict, List, Optional
 from urllib.parse import parse_qs, urlencode, urlparse, urlunparse
 
@@ -25,8 +28,9 @@ def _append_assistant_visible_text(state: RuntimeState, text: Any) -> None:
 class MessageRouter:
     """按 `type` 路由服务端文本消息。各处理函数保持轻量。"""
 
-    def __init__(self, state: RuntimeState):
+    def __init__(self, state: RuntimeState, *, tts_sentence_only: bool = False):
         self.state = state
+        self.tts_sentence_only = tts_sentence_only
         self._mcp_tasks: set[asyncio.Task[Any]] = set()
 
     def handle_text_message(self, message: Dict[str, Any]) -> None:
@@ -75,7 +79,10 @@ class MessageRouter:
     def handle_tts(self, message: Dict[str, Any]) -> None:
         state = message.get("state", "")
         text = message.get("text", "")
-        _append_assistant_visible_text(self.state, text)
+        if not self.tts_sentence_only or state == "sentence_start":
+            _append_assistant_visible_text(self.state, text)
+        if self.tts_sentence_only:
+            print(f"    [小智接收] tts/{state}", flush=True)
         if state == "stop":
             self.state.response_complete_event.set()
         self.state.router_logs.append({"type": "tts", "message": message})
@@ -86,7 +93,7 @@ class MessageRouter:
 
     def handle_llm(self, message: Dict[str, Any]) -> None:
         text = message.get("text", "")
-        if isinstance(text, str) and text.strip() and text.strip() != "😊":
+        if not self.tts_sentence_only and isinstance(text, str) and text.strip() and text.strip() != "😊":
             _append_assistant_visible_text(self.state, text)
         self.state.router_logs.append({"type": "llm", "message": message})
 
@@ -207,6 +214,14 @@ class TransportClient:
         self.state = state
         self.router = router
 
+    def websocket_target(self, final_url: str, token: str):
+        return final_url, {}
+
+    def hello_payload(self):
+        return {"type": "hello", "device_id": self.cfg.device_mac,
+                "device_name": self.cfg.device_name, "device_mac": self.cfg.device_mac,
+                "token": self.cfg.token, "features": {"mcp": True}}
+
     async def send_ota_request(self) -> Dict[str, Any]:
         """POST OTA 激活检查，返回 {ok, status, data, error, request}。"""
         headers = {
@@ -291,7 +306,9 @@ class TransportClient:
         return str(ws.get("url") or "").strip(), str(ws.get("token") or "").strip()
 
     async def connect_websocket(self, ws_url: str, token: str) -> bool:
+        self.last_connect_error = ""
         if not ws_url:
+            self.last_connect_error = "WebSocket 地址为空"
             return False
 
         parsed = urlparse(ws_url)
@@ -306,22 +323,25 @@ class TransportClient:
         )
 
         try:
-            self.state.websocket = await websockets.connect(final_url)
+            final_url, options = self.websocket_target(final_url, token)
+            if parsed.scheme == "wss":
+                # Keep system/custom trust and add the CA bundle already used by requests.
+                # Python.org macOS installs may have no default OpenSSL CA file.
+                context = ssl.create_default_context()
+                context.load_verify_locations(cafile=certifi.where())
+                options["ssl"] = context
+            self.state.websocket = await websockets.connect(final_url, **options)
             return True
-        except Exception:
+        except Exception as exc:
+            from safe_output import redact_text
+            self.last_connect_error = redact_text(f"{type(exc).__name__}: {exc}", [token])
+            print(f"WebSocket 连接失败：{self.last_connect_error}", flush=True)
             return False
 
     async def send_hello_message(self) -> bool:
         if not self.state.websocket:
             return False
-        hello = {
-            "type": "hello",
-            "device_id": self.cfg.device_mac,
-            "device_name": self.cfg.device_name,
-            "device_mac": self.cfg.device_mac,
-            "token": self.cfg.token,
-            "features": {"mcp": True},
-        }
+        hello = self.hello_payload()
         await self.state.websocket.send(json.dumps(hello, ensure_ascii=False))
         try:
             raw = await asyncio.wait_for(self.state.websocket.recv(), timeout=5.0)
@@ -330,6 +350,8 @@ class TransportClient:
             msg = json.loads(raw)
             if msg.get("type") == "hello" and msg.get("session_id"):
                 self.router.handle_text_message(msg)
+                if getattr(self.cfg, "connection_scene", "company") == "xiaozhi":
+                    return True
                 try:
                     self._last_hello_drain_info = await self.drain_after_hello()
                 except Exception as exc:
@@ -419,7 +441,11 @@ class TransportClient:
                 self.router.handle_text_message(msg)
                 return msg
             return {"type": "binary", "size": len(raw)}
+        except asyncio.TimeoutError:
+            return None
         except Exception:
+            if getattr(self.cfg, "connection_scene", "company") == "xiaozhi":
+                raise
             return None
 
 # 文本消息收发
@@ -434,11 +460,14 @@ class TextInteractionPipeline:
         if not self.state.websocket:
             return False
         payload = {"type": "listen", "mode": "manual", "state": "detect", "text": text}
+        if self.cfg and getattr(self.cfg, "connection_scene", "company") == "xiaozhi":
+            payload["session_id"] = self.state.session_id
         preview = " ".join(str(text).split())
         if len(preview) > 100:
             preview = preview[:100] + "..."
         print(f"    [发送] {preview}", flush=True)
         self.state.response_complete_event.clear()
+        self._response_log_start = len(self.state.router_logs)
         await self.state.websocket.send(json.dumps(payload, ensure_ascii=False))
         return True
 
@@ -470,10 +499,22 @@ class TextInteractionPipeline:
             remaining = min(recv_timeout, quiet_seconds - idle, deadline - loop.time())
             if remaining <= 0:
                 break
-            msg = await transport.recv_loop_once(timeout=remaining)
+            try:
+                msg = await transport.recv_loop_once(timeout=remaining)
+            except websockets.exceptions.ConnectionClosed:
+                if self.cfg and getattr(self.cfg, "connection_scene", "company") == "xiaozhi" and self.state.response_complete_event.is_set():
+                    break  # A completed answer may be followed immediately by server close.
+                raise
             if msg is not None:
                 last_activity = loop.time()
 
         complete = self.state.response_complete_event.is_set()
+        if self.cfg and getattr(self.cfg, "connection_scene", "company") == "xiaozhi":
+            logs = self.state.router_logs[getattr(self, "_response_log_start", 0):]
+            complete = any(item.get("type") == "tts" and item.get("message", {}).get("state") == "stop" for item in logs)
+            if not complete:
+                raise TimeoutError("小智 AI 回答未在时限内完整结束，未提交语言评分")
+            if not self.state.get_full_server_response_text().strip():
+                raise ValueError("小智 AI 回复结束但没有可评分的文本")
         return self.state.get_full_server_response_text(), complete
 

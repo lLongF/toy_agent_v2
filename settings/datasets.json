@@ -1,0 +1,32 @@
+{
+  "version": 1,
+  "datasets": [
+    {
+      "id": "dataset-0deebe1e3d27",
+      "name": "仪宝测试集",
+      "scope": "toy",
+      "owner_toy_id": "default",
+      "path": "data/datasets/dataset-0deebe1e3d27.xlsx",
+      "enabled": true,
+      "description": ""
+    },
+    {
+      "id": "dataset-fdb07e2683d6",
+      "name": "仪宝对话测试",
+      "scope": "toy",
+      "owner_toy_id": "toy-ff0e79f82509",
+      "path": "data/datasets/dataset-fdb07e2683d6.xlsx",
+      "enabled": true,
+      "description": ""
+    },
+    {
+      "id": "dataset-c04613d89b96",
+      "name": "曦仔基础问答",
+      "scope": "toy",
+      "owner_toy_id": "default",
+      "path": "data/datasets/dataset-c04613d89b96.xlsx",
+      "enabled": true,
+      "description": ""
+    }
+  ]
+}
