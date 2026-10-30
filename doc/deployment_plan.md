@@ -92,7 +92,7 @@ STREAMLIT_SERVER_ENABLE_CORS=true
 STREAMLIT_SERVER_ENABLE_XSRF_PROTECTION=true
 ```
 
-systemd 环境文件不写 `export`。实际密钥必须替换占位符；修改后重启服务。裁判注册配置需引用这些变量：默认 Qwen 为 `DASHSCOPE_API_KEY`，DeepSeek 为 `DEEPSEEK_API_KEY`；自定义裁判按自己的 `credential_ref` 配置。发版自测输入的临时 Key 优先，留空时使用已配置凭据。玩具 Token 仍可每次手动输入；如需自动读取，迁移对应玩具的环境变量引用。
+systemd 环境文件不写 `export`。实际密钥必须替换占位符；修改后重启服务。裁判注册配置需引用这些变量：默认 Qwen 为 `DASHSCOPE_API_KEY`，DeepSeek 为 `DEEPSEEK_API_KEY`；自定义裁判按自己的 `credential_ref` 配置。独立 `/release` 不提供裁判 Key 输入，使用服务已配置凭据；工作台内的发版自测仍支持临时输入优先。玩具 Token 仍可每次手动输入；如需自动读取，迁移对应玩具的环境变量引用。
 
 服务的实际启动方式为：
 
@@ -137,7 +137,7 @@ curl -fsS http://127.0.0.1:8501/_stcore/health
 | 域名、HTTPS、WebSocket 代理和访问控制正常 | 待验收 |
 | `/` 的原菜单、用例维护和报告读取正常 | 待验收 |
 | `/release` 可选玩具、测试集和裁判，不出现运行环境选项 | 待验收 |
-| 临时 Key 可使用；留空时服务器环境变量可读取 | 待验收 |
+| 独立入口读取服务器凭据且无 Key 输入框；工作台临时 Key 仍可使用 | 待验收 |
 | 经明确授权运行少量真实用例，采集/评分进度、日志和结果正常 | 待验收 |
 | 停止后显示已停止、设备占用释放、可以再次运行 | 待验收 |
 | 完整报告在独立路由内打开、返回正常、Excel 可下载 | 待验收 |

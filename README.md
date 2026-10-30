@@ -61,12 +61,39 @@ python -m pip install -r requirements.txt
 
 ## Streamlit 评测界面
 
-安装依赖后启动（Windows、macOS、Linux 命令一致）：
+安装依赖后，Windows 在项目根目录使用启动脚本：
+
+```powershell
+.\.venv\Scripts\python.exe scripts/check_environment.py
+.\.venv\Scripts\python.exe -m pip check
+.\scripts\start_local.ps1
+```
+
+脚本固定使用项目 `.venv` 的 Python 3.11，自动重新读取已保存的 `DASHSCOPE_API_KEY`、`DEEPSEEK_API_KEY`，优先级为 Windows 当前用户变量 > 系统变量 > 当前终端变量。不会输出 Key，也不会修改已保存的变量；未配置 Key 仍可打开页面，相应文本评测会提示缺少凭据。自定义裁判的其他环境变量需在启动终端或系统中另行配置。
+
+以后每次运行 `.\scripts\start_local.ps1` 即可，无需重新输入已保存的 Key。启动后访问 `http://127.0.0.1:8501/release`，右侧应显示所选裁判“已读取凭据”。修改 Key 后等待现有任务结束，在原终端按 `Ctrl+C` 停止服务，再运行脚本；仅刷新网页不更新进程环境。
+
+可选命令：
+
+```powershell
+# 只检查 Python 和凭据读取来源，不启动服务、不调用模型
+.\scripts\start_local.ps1 -CheckOnly
+# 原端口已被其他服务占用时，指定其他端口
+.\scripts\start_local.ps1 -Port 8510
+```
+
+若本机 PowerShell 默认策略阻止脚本运行，可使用仅对这次进程生效的命令（不修改系统策略）：
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\start_local.ps1
+```
+
+macOS / Linux 使用项目虚拟环境，先在实际启动服务的环境中配置凭据：
 
 ```sh
-python scripts/check_environment.py
-python -m pip check
-python -m streamlit run streamlit_app.py
+.venv/bin/python scripts/check_environment.py
+.venv/bin/python -m pip check
+.venv/bin/python -m streamlit run streamlit_app.py
 ```
 
 打开终端显示的本地地址，默认 `http://127.0.0.1:8501`。七个一级菜单提供评测与实时对话：
@@ -87,7 +114,7 @@ python -m streamlit run streamlit_app.py
 
 结果区与配置区统一卡片风格，提供真实任务结论、Excel 下载和完整报告入口；分别展示通过、未通过、评分失败、执行异常与未执行，业务通过率沿用已有统计口径。支持关键词搜索、状态筛选以及点击表格行或选择编号查看右侧诊断，运行日志位于结果下方。失败或停止时明确标记结果不完整，不因已有部分报告而显示为执行成功。
 
-发版自测中，每个已选裁判旁均可临时输入 API Key，手动输入优先，启动成功后清空输入框，不写入模型注册表。留空时使用现有凭据引用；默认 Qwen 读取 `DASHSCOPE_API_KEY`，DeepSeek 读取 `DEEPSEEK_API_KEY`。服务器部署时将变量配置到实际运行 Streamlit 的服务环境并重启服务，即可直接选模型运行。自定义裁判按其 `credential_ref` 指定的环境变量读取。真实 Key 不提交 Git。评测配置与执行仍保留裁判选择和临时凭据输入，不再显示裁判模型管理表单。
+独立 `/release` 不提供裁判 API Key 输入框，直接使用服务已配置的凭据，右侧概览显示读取状态；未读取到凭据时提示管理员配置。默认 Qwen 读取 `DASHSCOPE_API_KEY`，DeepSeek 读取 `DEEPSEEK_API_KEY`。服务器部署时将变量配置到实际运行 Streamlit 的服务环境并重启服务，即可直接选模型运行。自定义裁判按其 `credential_ref` 读取。真实 Key 不提交 Git。工作台内的发版自测及评测配置与执行仍保留临时凭据输入，手动输入优先，启动成功后清空，不写入模型注册表。
 
 发版自测运行时展示启动校验、连接准备、采集会话、裁判评分和生成报告阶段。采集按已处理类型会话计数，评分按已完成评分任务计数，每 3 秒刷新；进度表示当前阶段的处理数量，不代表总耗时或用例通过率。失败任务保留失败状态，不显示完成 100%。同设备已有界面任务时显示其记录并禁用重复启动；旧任务缺少来源标记时从报告快照恢复展示，不改写历史文件。
 

@@ -21,8 +21,12 @@ py -3.11 -m venv .venv
 .\.venv\Scripts\python.exe scripts/check_environment.py
 .\.venv\Scripts\python.exe -m pip check
 .\.venv\Scripts\python.exe -m unittest discover -s tests -v
-.\.venv\Scripts\python.exe -m streamlit run streamlit_app.py
+.\scripts\start_local.ps1
 ```
+
+后续每次启动只需运行 `.\scripts\start_local.ps1`。脚本使用项目 `.venv`，启动前重新加载已保存的 Qwen / DeepSeek Key，读取顺序为 Windows 当前用户 > 系统 > 当前进程；只显示变量来源，不显示 Key。`-CheckOnly` 仅检查环境，`-Port 8510` 可指定本地端口。默认页面为 `http://127.0.0.1:8501/`，发版自测为 `/release`，实时对话为 `/chat`。凭据变更后需等待任务结束再停止并重新运行脚本。
+
+若脚本被本机默认执行策略阻止，可运行 `powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\start_local.ps1`；该参数仅影响本次启动进程，不修改系统执行策略。Linux 服务器继续使用 systemd 的环境文件配置，不使用 Windows 启动脚本。
 
 macOS / Linux：
 

@@ -229,20 +229,23 @@ def release_page(toys, base_config, manager, root, detail_panel, open_report, *,
         judge_keys = {}
         credential_states = {}
         for identity in judges:
-            model_column, key_column = st.columns([1, 2])
-            model_column.markdown(f'**{catalog[identity]["name"]} · {catalog[identity]["model"]}**')
-            judge_keys[identity] = key_column.text_input(
-                catalog[identity]["name"] + " API Key", type="password",
-                key="release_api_key_" + identity, placeholder="本次临时输入；留空使用已配置凭据")
             if presentation:
+                # 独立入口只使用服务已配置凭据，不沿用旧页面留下的临时 Key。
+                st.session_state.pop("release_api_key_" + identity, None)
                 try:
-                    credential_states[identity] = bool(resolve_judge_credential(
-                        catalog[identity], {identity: judge_keys[identity]} if judge_keys[identity].strip() else {}))
+                    credential_states[identity] = bool(resolve_judge_credential(catalog[identity]))
                 except (OSError, ValueError):
                     credential_states[identity] = False
-                key_column.caption("● 已读取本次输入的凭据" if judge_keys[identity].strip() else
-                                   ("● 已读取配置凭据，可留空" if credential_states[identity] else "○ 未读取到配置凭据，请填写 Key"))
-        st.caption("Key 留空使用已配置凭据；手动输入仅用于本次自测。")
+            else:
+                model_column, key_column = st.columns([1, 2])
+                model_column.markdown(f'**{catalog[identity]["name"]} · {catalog[identity]["model"]}**')
+                judge_keys[identity] = key_column.text_input(
+                    catalog[identity]["name"] + " API Key", type="password",
+                    key="release_api_key_" + identity, placeholder="本次临时输入；留空使用已配置凭据")
+        st.caption("裁判使用服务已配置凭据；读取状态见右侧概览。" if presentation else
+                   "Key 留空使用已配置凭据；手动输入仅用于本次自测。")
+        if presentation and any(not ready for ready in credential_states.values()):
+            st.warning("部分裁判未读取到凭据，请管理员配置相应环境变量或凭据引用，并重启服务。")
         base = base_config(toy)
         with st.expander("高级连接设置"):
             mac = st.text_input("设备 MAC", value=base.device_mac, key="release_mac_" + toy_id)

@@ -47,12 +47,20 @@ class ReleaseRouteTests(unittest.TestCase):
             self.assertTrue(any('未读取凭据' in item.value for item in app.markdown))
             self.assertTrue(app.button(key='release_start').disabled)
             self.assertTrue(any(item.label == '用例' for item in app.metric))
+            self.assertFalse(any(item.key.startswith('release_api_key_') for item in app.text_input))
             with patch.dict('os.environ', {'DASHSCOPE_API_KEY': 'offline-only-key'}):
+                app.session_state['release_api_key_qwen'] = 'stale-manual-key'
                 app.run()
                 self.assertFalse(app.exception)
-                self.assertTrue(any('已读取配置凭据，可留空' in item.value for item in app.caption))
-                self.assertEqual(app.text_input(key='release_api_key_qwen').value, '')
+                self.assertTrue(any('已读取凭据' in item.value for item in app.markdown))
+                self.assertFalse(any(item.key.startswith('release_api_key_') for item in app.text_input))
                 self.assertFalse(any('offline-only-key' in item.value for item in app.markdown))
+                app.text_input(key='release_url').set_value('wss://release.invalid').run()
+                next(item for item in app.text_input if item.key.startswith('release_token_')).set_value('test-only-token').run()
+                with patch('ui_release.validate_request'), patch('ui_jobs.JobManager.start', return_value=ROOT / 'reports' / 'test-only') as start:
+                    app.button(key='release_start').click().run()
+                    self.assertFalse(app.exception)
+                    self.assertEqual(start.call_args.args[0].judge_credentials['qwen'], 'offline-only-key')
 
 
 if __name__ == '__main__':
