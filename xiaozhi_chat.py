@@ -56,7 +56,7 @@ class ChatBridge:
 
     async def _serve(self):
         # Only the reverse proxy is public. The raw bridge always stays on loopback.
-        async with serve(self.handle, "127.0.0.1", self.listen_port, max_size=2**20) as server:
+        async with serve(self.handle, "0.0.0.0", self.listen_port, max_size=2**20) as server:
             self.port = server.sockets[0].getsockname()[1]
             self.ready.set()
             await asyncio.Future()
