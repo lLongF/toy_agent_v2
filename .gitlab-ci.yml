@@ -1,0 +1,25 @@
+# 在本机 Windows Runner（shell）上跑。
+# 普通 push 不触发；只有定时计划或网页 Run pipeline 才会跑。
+
+stages:
+  - test
+
+daily_test:
+  stage: test
+  timeout: 4h
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "schedule"
+    - if: $CI_PIPELINE_SOURCE == "web"
+  variables:
+    PYTHONUNBUFFERED: "1"
+    PYTHONUTF8: "1"
+    PYTHONIOENCODING: "utf-8"
+  before_script:
+    - python -m pip install -r requirements.txt
+  script:
+    - python daily_run.py
+  artifacts:
+    when: always
+    paths:
+      - reports/
+    expire_in: 14 days
