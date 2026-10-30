@@ -38,6 +38,22 @@ class ReleaseRouteTests(unittest.TestCase):
         app.radio(key='navigation').set_value('评测总览').run()
         self.assertFalse(app.exception)
 
+    def test_presentation_credential_status_tracks_environment_without_model_calls(self):
+        with patch('collection.requests.post', side_effect=AssertionError('展示页面不能调用设备')), \
+             patch('judge.LLMJudge._chat', side_effect=AssertionError('展示凭据状态不能调用裁判')), \
+             patch.dict('os.environ', {'DASHSCOPE_API_KEY': '', 'DEEPSEEK_API_KEY': ''}):
+            app = AppTest.from_string('from streamlit_app import release_demo\nrelease_demo()', default_timeout=30).run()
+            self.assertFalse(app.exception)
+            self.assertTrue(any('未读取凭据' in item.value for item in app.markdown))
+            self.assertTrue(app.button(key='release_start').disabled)
+            self.assertTrue(any(item.label == '用例' for item in app.metric))
+            with patch.dict('os.environ', {'DASHSCOPE_API_KEY': 'offline-only-key'}):
+                app.run()
+                self.assertFalse(app.exception)
+                self.assertTrue(any('已读取配置凭据，可留空' in item.value for item in app.caption))
+                self.assertEqual(app.text_input(key='release_api_key_qwen').value, '')
+                self.assertFalse(any('offline-only-key' in item.value for item in app.markdown))
+
 
 if __name__ == '__main__':
     unittest.main()

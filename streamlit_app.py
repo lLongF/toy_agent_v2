@@ -23,7 +23,7 @@ from toy_profiles import list_toy_profiles
 from ui_jobs import JobManager, ROOT
 from ui_request import validate_request
 from ui_results import attachments, confined, discover_reports, read_report
-from ui_styles import apply_styles, apply_chat_demo_styles, empty_state, metric_cards, page_header
+from ui_styles import apply_styles, apply_chat_demo_styles, apply_release_demo_styles, empty_state, metric_cards, page_header
 from ui_management import cases_management, tools_management, rules_management, triggers_management
 from asset_store import case_issues
 
@@ -678,6 +678,7 @@ def release_demo():
     """独立演示入口，复用平台自测和报告，不创建另一套执行逻辑。"""
     st.set_page_config(page_title="发版自测", initial_sidebar_state="collapsed")
     apply_styles()
+    apply_release_demo_styles()
     st.markdown("""<style>
         [data-testid="stSidebar"], [data-testid="stSidebarCollapsedControl"],
         [data-testid="stHeader"] {display:none;}
@@ -697,7 +698,7 @@ def release_demo():
     from ui_release import release_page
     def open_report(path):
         st.session_state["release_demo_report"] = str(path)
-    release_page(list_toy_profiles(), base_config, job_manager(), ROOT / "reports", detail_panel, open_report)
+    release_page(list_toy_profiles(), base_config, job_manager(), ROOT / "reports", detail_panel, open_report, presentation=True)
 
 
 def main():

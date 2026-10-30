@@ -5,13 +5,14 @@ import json
 import subprocess
 from collections import Counter
 from dataclasses import replace
+from html import escape
 from pathlib import Path
 
 import streamlit as st
 
 from config import load_dialogue_groups_from_xlsx
 from dataset_store import list_datasets
-from judge_store import list_judge_models
+from judge_store import list_judge_models, resolve_judge_credential
 from safe_output import redact_text
 from toy_profiles import apply_toy_environment
 from ui_request import validate_request
@@ -125,7 +126,7 @@ def show_progress(directory, job, root):
 
 
 @st.fragment(run_every="3s")
-def release_history(manager, root, detail_panel, open_report, device_mac=None):
+def release_history(manager, root, detail_panel, open_report, device_mac=None, *, presentation=False):
     manager.refresh()
     jobs = release_jobs(root)
     active = getattr(manager, "active_job", lambda device: None)(device_mac) if device_mac else None
@@ -138,7 +139,7 @@ def release_history(manager, root, detail_panel, open_report, device_mac=None):
             jobs.insert(0, (str(active), json.loads((active / "job.json").read_text(encoding="utf-8"))))
         except (OSError, ValueError):
             st.warning("设备已有任务运行，暂时无法读取任务记录。")
-    st.markdown("### 02 · 自测结果与最近运行")
+    st.markdown("### 本次自测结果" if presentation else "### 02 · 自测结果与最近运行")
     if not jobs:
         st.info("尚无发版自测记录。开始后将展示真实状态与日志。")
         return
@@ -166,31 +167,44 @@ def release_history(manager, root, detail_panel, open_report, device_mac=None):
         st.warning("本次运行已由用户停止。日志及已生成的报告已保留；未完成部分不视为通过。")
     if job.get("error"):
         st.error(redact_text(job["error"]))
+    path = job.get("report_paths", {}).get("detail_report")
+    if path:
+        try:
+            report = read_report(Path(path), root)
+            if presentation:
+                from ui_release_results import release_presentation_results
+                release_presentation_results(report, root, detail_panel, open_report, job_status=job["status"])
+            else:
+                release_results(report, root, detail_panel, open_report, interrupted=job["status"] == "stopped")
+        except (OSError, ValueError, KeyError) as exc:
+            st.error("报告读取失败：" + redact_text(str(exc)))
     log = confined(Path(selected) / "run.log", root)
     with st.expander("运行日志", expanded=job["status"] == "running"):
         if log.is_file():
             with log.open("rb") as handle:
                 handle.seek(max(0, log.stat().st_size - 24000))
                 st.code(redact_text(handle.read().decode("utf-8", errors="replace")) or "正在启动……", language="text")
-    path = job.get("report_paths", {}).get("detail_report")
-    if path:
-        try:
-            release_results(read_report(Path(path), root), root, detail_panel, open_report,
-                            interrupted=job["status"] == "stopped")
-        except (OSError, ValueError, KeyError) as exc:
-            st.error("报告读取失败：" + redact_text(str(exc)))
 
 
-def release_page(toys, base_config, manager, root, detail_panel, open_report):
+def release_page(toys, base_config, manager, root, detail_panel, open_report, *, presentation=False):
     for identity in st.session_state.pop("release_clear_keys", []):
         st.session_state.pop("release_api_key_" + identity, None)
-    page_header("发版自测", "选择玩具和测试集，快速检查本次发版。", "RELEASE CHECK")
+    if presentation:
+        with st.container(key="release-hero"):
+            st.markdown('<div class="release-brand"><span>◈</span> 产品质量验证 <b>RELEASE CHECK</b></div>', unsafe_allow_html=True)
+            st.title("发版自测")
+            st.caption("配置自测、查看结果，完整掌握本次发版表现。")
+            st.markdown('<div class="release-flow"><span><b>01</b> 配置自测</span><i>→</i>'
+                        '<span><b>02</b> 执行与评分</span><i>→</i><span><b>03</b> 查看报告</span></div>', unsafe_allow_html=True)
+    else:
+        page_header("发版自测", "选择玩具和测试集，快速检查本次发版。", "RELEASE CHECK")
     enabled = {t.id: t for t in toys if t.enabled}
     if not enabled:
         st.warning("没有已启用的玩具，请先在玩具管理中配置。")
         return
-    with st.container(border=True):
-        st.markdown("### 01 · 连接与用例")
+    setup, overview = st.columns([1.4, 1], gap="medium") if presentation else (st.container(), None)
+    with setup, st.container(border=True, key="release-setup"):
+        st.markdown("### ⚙ 自测配置" if presentation else "### 01 · 连接与用例")
         st.caption("使用下方填写的接口地址直连 WebSocket，跳过 OTA。")
         url = st.text_input("WebSocket 接口地址", placeholder="wss://测试环境域名/接口路径", key="release_url")
         left, right = st.columns(2)
@@ -213,13 +227,22 @@ def release_page(toys, base_config, manager, root, detail_panel, open_report):
         judges = st.multiselect("裁判模型", list(catalog), default=list(catalog)[:1],
                                format_func=lambda x: catalog[x]["name"] + " · " + catalog[x]["model"], key="release_judges")
         judge_keys = {}
+        credential_states = {}
         for identity in judges:
             model_column, key_column = st.columns([1, 2])
             model_column.markdown(f'**{catalog[identity]["name"]} · {catalog[identity]["model"]}**')
             judge_keys[identity] = key_column.text_input(
                 catalog[identity]["name"] + " API Key", type="password",
                 key="release_api_key_" + identity, placeholder="本次临时输入；留空使用已配置凭据")
-        st.caption("手动 Key 优先，仅供本次运行，启动后清空输入框；留空沿用已有凭据。服务器配置环境变量后无需手动输入。")
+            if presentation:
+                try:
+                    credential_states[identity] = bool(resolve_judge_credential(
+                        catalog[identity], {identity: judge_keys[identity]} if judge_keys[identity].strip() else {}))
+                except (OSError, ValueError):
+                    credential_states[identity] = False
+                key_column.caption("● 已读取本次输入的凭据" if judge_keys[identity].strip() else
+                                   ("● 已读取配置凭据，可留空" if credential_states[identity] else "○ 未读取到配置凭据，请填写 Key"))
+        st.caption("Key 留空使用已配置凭据；手动输入仅用于本次自测。")
         base = base_config(toy)
         with st.expander("高级连接设置"):
             mac = st.text_input("设备 MAC", value=base.device_mac, key="release_mac_" + toy_id)
@@ -229,7 +252,7 @@ def release_page(toys, base_config, manager, root, detail_panel, open_report):
         st.session_state["release_device_busy"] = bool(active)
         if active:
             st.info(f"该设备正在运行任务 {Path(active).name}，下方可查看状态，请等待结束。")
-        if st.button("开始自测 →", type="primary", key="release_start",
+        if st.button("开始自测 →", type="primary", key="release_start", width="stretch" if presentation else "content",
                      disabled=bool(active) or not (url.strip() and token.strip() and selected and judges)):
             try:
                 cfg = release_config(base, toy, url=url, token=token,
@@ -240,4 +263,32 @@ def release_page(toys, base_config, manager, root, detail_panel, open_report):
                 st.rerun()
             except (OSError, ValueError, KeyError) as exc:
                 st.error(redact_text(str(exc), [token, *judge_keys.values()]))
-    release_history(manager, root, detail_panel, open_report, mac.strip())
+    if overview is not None:
+        with overview, st.container(border=True, key="release-overview"):
+            st.markdown("### ◈ 本次配置概览")
+            st.markdown(f'<div class="release-product"><span>◈</span><div><strong>{escape(toy.name or toy.id)}</strong>'
+                        '<small>发版质量验证</small></div></div>', unsafe_allow_html=True)
+            st.markdown("### 自测概览")
+            for column, label, value in zip(st.columns(3), ("测试集", "用例", "裁判"),
+                                             (len(selected), sum(counts.values()), len(judges))):
+                column.metric(label, value)
+            if counts:
+                chips = "".join(f'<span>{escape(category)} <b>{count}</b></span>' for category, count in counts.items())
+                st.markdown('<div class="release-categories">' + chips + '</div>', unsafe_allow_html=True)
+            st.markdown("#### 评分裁判")
+            if not judges:
+                st.caption("请选择本次使用的裁判模型。")
+            for identity in judges:
+                item = catalog[identity]
+                ready = credential_states[identity]
+                st.markdown(f'<div class="release-judge"><div><strong>{escape(item["name"])}</strong>'
+                            f'<small>{escape(item["model"])}</small></div><span class="{"available" if ready else "missing"}">'
+                            f'{"已读取凭据" if ready else "未读取凭据"}</span></div>', unsafe_allow_html=True)
+            st.caption("凭据状态仅表示当前服务可读取，实际调用以运行结果为准。")
+            st.divider()
+            st.markdown("#### 自测流程")
+            st.markdown('<div class="release-guide"><p><b>01</b> 连接玩具，采集真实回答</p>'
+                        '<p><b>02</b> 按用例规则进行评分</p><p><b>03</b> 查看明细，下载自测报告</p></div>', unsafe_allow_html=True)
+            st.caption("强制工具调用按规则校验；执行异常与评分失败单独展示。")
+    with st.container(key="release-history"):
+        release_history(manager, root, detail_panel, open_report, mac.strip(), presentation=presentation)
